@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AutoFin Research Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="mark">AF</span>
+          <div>
+            <h1>AutoFin</h1>
+            <p>Agent Workspace</p>
+          </div>
+        </div>
+
+        <section class="sidebar-section">
+          <div class="section-heading">
+            <h2>Sessions</h2>
+            <button id="refresh-tasks" type="button" title="Refresh sessions">Refresh</button>
+          </div>
+          <div id="task-list" class="task-list"></div>
+        </section>
+
+        <section class="sidebar-section">
+          <div class="section-heading">
+            <h2>Skills</h2>
+          </div>
+          <div id="skill-list" class="skill-list"></div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow">Local Financial Agent</p>
+            <h2>Research Session</h2>
+          </div>
+          <span id="runtime-status" class="status-badge">Idle</span>
+        </header>
+
+        <section class="chat-panel">
+          <div id="chat-log" class="chat-log"></div>
+          <form id="chat-form" class="chat-form">
+            <div class="composer-box">
+              <textarea
+                id="chat-message"
+                rows="3"
+                placeholder="帮我分析 AAPL 最近的 10-K，重点看风险因素和现金流"
+              ></textarea>
+              <div class="composer-actions">
+                <span class="composer-hint">SEC filings · evidence-first · auditable</span>
+                <button id="send-chat" type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <aside class="details">
+        <section class="detail-panel task-panel">
+          <div class="section-heading">
+            <h2>Current Task</h2>
+          </div>
+          <span id="active-task-id" class="muted">No active task</span>
+        </section>
+
+        <section class="detail-panel timeline-panel">
+          <div class="section-heading">
+            <h2>Activity</h2>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+
+        <section class="detail-panel">
+          <div class="section-heading">
+            <h2>Result</h2>
+          </div>
+          <pre id="result-json" class="json-view">{}</pre>
+        </section>
+
+        <section class="detail-panel evidence-panel">
+          <div class="section-heading">
+            <h2>Evidence</h2>
+          </div>
+          <div id="evidence-list" class="evidence-list"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

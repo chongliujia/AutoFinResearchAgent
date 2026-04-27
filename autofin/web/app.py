@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from autofin.web.task_store import TaskStore
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+class CreateTaskRequest(BaseModel):
+    objective: str = "Analyze SEC filing"
+    skill_name: str = "sec_filing_analysis"
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+    ticker: Optional[str] = None
+    filing_type: Optional[str] = "10-K"
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+app = FastAPI(title="AutoFinResearchAgent")
+store = TaskStore()
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/health")
+def health() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/api/skills")
+def list_skills():
+    return {"skills": store.list_skills()}
+
+
+@app.get("/api/tasks")
+def list_tasks():
+    return {"tasks": store.list_tasks()}
+
+
+@app.post("/api/tasks")
+def create_task(request: CreateTaskRequest, background_tasks: BackgroundTasks):
+    inputs = dict(request.inputs)
+    if request.ticker:
+        inputs["ticker"] = request.ticker
+    if request.filing_type:
+        inputs.setdefault("filing_type", request.filing_type)
+
+    record = store.create_task(request.objective, request.skill_name, inputs)
+    background_tasks.add_task(store.run_task, record.id)
+    return record.public_view()
+
+
+@app.post("/api/chat")
+def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
+    record, chat_result = store.create_chat_task(request.message)
+    if record is None:
+        return {
+            "status": "needs_clarification",
+            "task": None,
+            **chat_result,
+        }
+
+    background_tasks.add_task(store.run_task, record.id)
+    return {
+        "status": "task_created",
+        "task": record.public_view(),
+        **chat_result,
+    }
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str):
+    try:
+        return store.get_task(task_id).public_view()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/tasks/{task_id}/events")
+async def task_events(task_id: str, cursor: int = 0):
+    try:
+        store.get_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    async def stream():
+        next_index = cursor
+        while True:
+            record = store.get_task(task_id)
+            events = record.events[next_index:]
+            for event in events:
+                payload = {"index": next_index, **event}
+                yield f"event: task-event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                next_index += 1
+
+            if record.status in {"completed", "failed"} and next_index >= len(record.events):
+                yield (
+                    "event: task-closed\n"
+                    f"data: {json.dumps({'status': record.status}, ensure_ascii=False)}\n\n"
+                )
+                break
+
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")

@@ -1,107 +1,238 @@
 # AutoFinResearchAgent
 
-### 核心思路：
+AutoFinResearchAgent is a local-first, skill-based runtime for auditable financial research agents.
 
-Agent Runtime 负责“想和调度”，Skills 负责“会做什么”，Sandbox 负责“安全执行”。
+The project is being built as a financial research agent workspace: users describe research goals in natural language, the runtime turns them into structured tasks, LangGraph executes the workflow, skills do the domain work, and the UI exposes tool calls, evidence, traces, and results.
 
-架构可以这样设计：
+## Current MVP
 
-```
-Financial Agent Runtime
-├── Agent Orchestrator
-├── Skill Registry
-│   ├── sec_filing_skill
-│   ├── market_data_skill
-│   ├── news_monitor_skill
-│   ├── financial_analysis_skill
-│   ├── report_writing_skill
-│   └── chart_generation_skill
-├── Sandbox Executor
-│   ├── Python Sandbox
-│   ├── SQL Sandbox
-│   ├── Browser / HTTP Sandbox
-│   └── File Sandbox
-├── Memory / State Store
-├── Scheduler
-├── Trace / Audit Log
-└── Notification
+The repository now contains a runnable Python MVP:
 
-```
+- LangGraph-backed research workflow
+- LangChain-compatible skill abstraction
+- Permission-aware skill registry
+- In-process sandbox boundary for the first execution model
+- Trace logging for auditability
+- Mock `sec_filing_analysis` skill
+- FastAPI service layer
+- Chat-first local Web UI inspired by agent apps such as Codex
+- Server-Sent Events for task activity streaming
+- Inline, collapsible tool-call cards in the chat flow
+- Tests for runtime, permissions, skills, orchestrator, and Web API
 
-Skills 怎么设计
+## Architecture
 
-每个 Skill 都应该是可声明、可测试、可复用的能力单元。
-
-例如：
-
-```
-name: sec_filing_analysis
-description: Analyze SEC 10-K / 10-Q filings
-inputs:
-  ticker: string
-  filing_type: string
-outputs:
-  filing_summary: object
-  evidence: list
-permissions:
-  network:
-    - sec.gov
-  filesystem:
-    - read
-    - write_temp
-runtime:
-  sandbox: python
-
+```text
+Web UI
+  |
+  v
+FastAPI service
+  |
+  v
+LangGraph research workflow
+  |
+  v
+Skill runtime + sandbox boundary
 ```
 
-Sandbox 怎么设计
+The core design remains:
 
-Sandbox 负责隔离风险。
-
-金融 Agent 会执行：
-
-Python 分析代码
-下载 SEC 文件
-生成图表
-读取本地文件
-访问外部 API
-
-这些都不能裸跑。
-
-Sandbox 应该限制：
-
-```
-网络访问白名单
-文件系统访问范围
-CPU / 内存 / 时间限制
-API key 权限
-禁止危险系统调用
-输出大小限制
-
+```text
+Agent Runtime  -> decides and schedules
+Skills         -> declare what they can do
+Sandbox        -> controls how execution happens
+Trace Log      -> records what happened
+Evidence       -> keeps outputs grounded
 ```
 
-最推荐的执行模型:
+The current workflow is:
 
-```
-Agent decides task
-↓
-Runtime selects skill
-↓
-Skill declares required permissions
-↓
-Sandbox creates isolated environment
-↓
-Skill executes
-↓
-Output validated by schema
-↓
-Trace written to audit log
+```text
+start_trace
+  |
+  v
+select_skill
+  |
+  v
+check_permissions
+  |
+  v
+execute_skill
+  |
+  v
+write_result_trace
 ```
 
-项目真正的亮点
+## Project Layout
 
-可以把项目定位成：
+```text
+autofin/
+  runtime/
+    orchestrator.py       # LangGraph workflow
+    permissions.py        # permission policy
+    skill_registry.py     # skill registration and selection
+    trace.py              # JSONL trace logging
+  sandbox/
+    executor.py           # execution boundary
+  skills/
+    base.py               # Skill abstraction + LangChain tool adapter
+    sec_filing.py         # mock SEC filing skill
+  web/
+    app.py                # FastAPI routes
+    task_store.py         # in-memory task/session store
+    static/               # local Web UI
+  cli.py                  # CLI entrypoint
+docs/
+  architecture.md
+  web-ui.md
+tests/
+```
 
+## Development Environment
+
+Use the existing conda environment `rag`:
+
+```bash
+source /Users/jiachongliu/anaconda3/etc/profile.d/conda.sh
+conda activate rag
 ```
-A skill-based, sandboxed runtime for long-running financial research agents.
+
+Install the package in editable mode:
+
+```bash
+pip install -e ".[dev]"
 ```
+
+Run tests:
+
+```bash
+python -m pytest
+```
+
+## CLI Usage
+
+Run the current mock SEC filing skill through the LangGraph runtime:
+
+```bash
+python -m autofin.cli run sec_filing_analysis --ticker AAPL --filing-type 10-K
+```
+
+Start the local Web UI:
+
+```bash
+python -m autofin.cli serve --port 8098
+```
+
+Open:
+
+```text
+http://127.0.0.1:8098
+```
+
+## Web UI
+
+The UI is chat-first, but the execution layer remains structured and auditable.
+
+```text
+User message
+  |
+  v
+deterministic parser
+  |
+  v
+structured research task
+  |
+  v
+LangGraph workflow
+  |
+  v
+inline tool calls + right-side inspector
+```
+
+The current screen is organized as:
+
+```text
+Left:   Sessions + Skills
+Center: Chat log + Composer
+Right:  Current task + Activity + Result + Evidence
+```
+
+Example prompt:
+
+```text
+帮我分析 AAPL 最近的 10-K，重点看风险因素和现金流
+```
+
+The backend parses this into a structured task:
+
+```json
+{
+  "ticker": "AAPL",
+  "filing_type": "10-K",
+  "focus": ["risk factors", "cash flow"]
+}
+```
+
+During execution, the chat stream shows collapsible tool-call cards:
+
+```text
+tool_call_requested: sec_filing_analysis
+  inputs
+  permissions
+
+tool_call_completed: sec_filing_analysis
+  trace_id
+  evidence
+```
+
+## API
+
+Health:
+
+```http
+GET /api/health
+```
+
+Skills:
+
+```http
+GET /api/skills
+```
+
+Tasks:
+
+```http
+GET /api/tasks
+POST /api/tasks
+GET /api/tasks/{task_id}
+GET /api/tasks/{task_id}/events
+```
+
+Chat:
+
+```http
+POST /api/chat
+```
+
+Example:
+
+```bash
+curl -sS http://127.0.0.1:8098/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"帮我分析 AAPL 最近的 10-K，重点看风险因素和现金流"}'
+```
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Web UI Development Notes](docs/web-ui.md)
+
+## Next Steps
+
+1. Replace the mock SEC skill with real SEC submissions/companyfacts integration.
+2. Add SQLite-backed task/session persistence.
+3. Add LangGraph checkpointing and task resume.
+4. Add a permission approval panel for network/filesystem access.
+5. Add generated report artifacts and Markdown/HTML memo previews.
+6. Migrate the static UI to React once the API shape stabilizes.
+7. Wrap the Web UI with Tauri when the local desktop workflow is mature.
