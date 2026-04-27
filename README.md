@@ -1,1 +1,1 @@
-# toyAgent
+# AutoFinResearchAgent
