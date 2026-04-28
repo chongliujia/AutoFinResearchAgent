@@ -266,6 +266,7 @@ curl -sS http://127.0.0.1:8098/api/chat \
 
 - [Architecture](docs/architecture.md)
 - [Web UI Development Notes](docs/web-ui.md)
+- [Intent Routing Design](docs/intent-routing.md)
 
 ## Next Steps
 

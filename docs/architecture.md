@@ -198,6 +198,12 @@ timeline + evidence + artifact
 autofin/intent.py
 ```
 
+更完整的 intent routing 设计见：
+
+```text
+docs/intent-routing.md
+```
+
 ## 推荐演进路线
 
 1. SEC filing skill 接入真实 SEC API
