@@ -13,11 +13,14 @@ The repository now contains a runnable Python MVP:
 - Permission-aware skill registry
 - In-process sandbox boundary for the first execution model
 - Trace logging for auditability
-- Mock `sec_filing_analysis` skill
+- `sec_filing_analysis` skill backed by SEC filing metadata
+- SEC submissions API client for filing metadata and source links
 - FastAPI service layer
 - Chat-first local Web UI inspired by agent apps such as Codex
 - Server-Sent Events for task activity streaming
 - Inline, collapsible tool-call cards in the chat flow
+- Model API configuration through environment variables and the local UI
+- LangChain structured-output parser for chat intent, with deterministic fallback
 - Tests for runtime, permissions, skills, orchestrator, and Web API
 
 ## Architecture
@@ -76,11 +79,15 @@ autofin/
     executor.py           # execution boundary
   skills/
     base.py               # Skill abstraction + LangChain tool adapter
-    sec_filing.py         # mock SEC filing skill
+    sec_filing.py         # SEC filing metadata skill
+  data/
+    sec_client.py         # SEC company ticker and submissions client
+  intent.py               # chat intent parsing
   web/
     app.py                # FastAPI routes
     task_store.py         # in-memory task/session store
     static/               # local Web UI
+  config.py               # model API configuration
   cli.py                  # CLI entrypoint
 docs/
   architecture.md
@@ -108,6 +115,19 @@ Run tests:
 ```bash
 python -m pytest
 ```
+
+Optional model API configuration:
+
+```bash
+export AUTOFIN_MODEL_PROVIDER=openai-compatible
+export AUTOFIN_MODEL_NAME=
+export AUTOFIN_MODEL_BASE_URL=
+export AUTOFIN_MODEL_API_KEY=
+export AUTOFIN_MODEL_TEMPERATURE=0.2
+export AUTOFIN_SEC_USER_AGENT="AutoFinResearchAgent your-email@example.com"
+```
+
+You can also configure these values in the local Web UI. API keys are never returned by the API in plaintext.
 
 ## CLI Usage
 
@@ -137,7 +157,7 @@ The UI is chat-first, but the execution layer remains structured and auditable.
 User message
   |
   v
-deterministic parser
+LangChain structured parser or deterministic fallback
   |
   v
 structured research task
@@ -152,7 +172,7 @@ inline tool calls + right-side inspector
 The current screen is organized as:
 
 ```text
-Left:   Sessions + Skills
+Left:   Sessions + Skills + Model API
 Center: Chat log + Composer
 Right:  Current task + Activity + Result + Evidence
 ```
@@ -172,6 +192,8 @@ The backend parses this into a structured task:
   "focus": ["risk factors", "cash flow"]
 }
 ```
+
+If a model API key and model name are configured, `/api/chat` uses LangChain structured output to parse the request. Without model configuration, it falls back to the deterministic parser so the app remains usable offline.
 
 During execution, the chat stream shows collapsible tool-call cards:
 
@@ -197,6 +219,13 @@ Skills:
 
 ```http
 GET /api/skills
+```
+
+Model settings:
+
+```http
+GET /api/settings/model
+POST /api/settings/model
 ```
 
 Tasks:
@@ -229,10 +258,11 @@ curl -sS http://127.0.0.1:8098/api/chat \
 
 ## Next Steps
 
-1. Replace the mock SEC skill with real SEC submissions/companyfacts integration.
+1. Add SEC filing document download and section extraction.
 2. Add SQLite-backed task/session persistence.
 3. Add LangGraph checkpointing and task resume.
-4. Add a permission approval panel for network/filesystem access.
-5. Add generated report artifacts and Markdown/HTML memo previews.
-6. Migrate the static UI to React once the API shape stabilizes.
-7. Wrap the Web UI with Tauri when the local desktop workflow is mature.
+4. Use the configured model for filing summarization and memo generation.
+5. Add a permission approval panel for network/filesystem access.
+6. Add generated report artifacts and Markdown/HTML memo previews.
+7. Migrate the static UI to React once the API shape stabilizes.
+8. Wrap the Web UI with Tauri when the local desktop workflow is mature.

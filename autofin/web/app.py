@@ -10,6 +10,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from autofin.config import ModelConfigStore
+from autofin.intent import LangChainIntentParser
 from autofin.web.task_store import TaskStore
 
 
@@ -28,8 +30,17 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ModelConfigRequest(BaseModel):
+    provider: str = "openai-compatible"
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    temperature: float = 0.2
+
+
 app = FastAPI(title="AutoFinResearchAgent")
-store = TaskStore()
+model_config_store = ModelConfigStore()
+store = TaskStore(intent_parser=LangChainIntentParser(model_config_store))
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -47,6 +58,17 @@ def health() -> Dict[str, str]:
 @app.get("/api/skills")
 def list_skills():
     return {"skills": store.list_skills()}
+
+
+@app.get("/api/settings/model")
+def get_model_settings():
+    return {"model_api": model_config_store.get().public_view()}
+
+
+@app.post("/api/settings/model")
+def update_model_settings(request: ModelConfigRequest):
+    config = model_config_store.update(request.model_dump())
+    return {"model_api": config.public_view()}
 
 
 @app.get("/api/tasks")

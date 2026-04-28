@@ -2,10 +2,30 @@ from time import sleep
 
 from fastapi.testclient import TestClient
 
-from autofin.web.app import app
+import autofin.web.app as web_app
+from autofin.data.sec_client import SECFiling
+from autofin.skills import SecFilingAnalysisSkill
+from autofin.web.task_store import TaskStore
 
 
-client = TestClient(app)
+class FakeSECClient:
+    def latest_filing(self, ticker, filing_type):
+        return SECFiling(
+            ticker=ticker.upper(),
+            cik="0000320193",
+            company_name="Apple Inc.",
+            filing_type=filing_type.upper(),
+            accession_number="0000320193-25-000079",
+            filing_date="2025-10-31",
+            report_date="2025-09-27",
+            primary_document="aapl-20250927.htm",
+            document_url="https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm",
+            index_url="https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/",
+        )
+
+
+web_app.store = TaskStore(skills=[SecFilingAnalysisSkill(FakeSECClient())])
+client = TestClient(web_app.app)
 
 
 def test_web_app_health_and_skills():
@@ -16,6 +36,26 @@ def test_web_app_health_and_skills():
     assert health.json() == {"status": "ok"}
     assert skills.status_code == 200
     assert skills.json()["skills"][0]["name"] == "sec_filing_analysis"
+
+
+def test_web_app_model_settings_redact_api_key():
+    response = client.post(
+        "/api/settings/model",
+        json={
+            "provider": "openai-compatible",
+            "model": "test-model",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-test-secret",
+            "temperature": 0.1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["model_api"]
+    assert payload["model"] == "test-model"
+    assert payload["api_key_configured"] is True
+    assert payload["api_key_preview"] == "sk-t...cret"
+    assert "sk-test-secret" not in response.text
 
 
 def test_web_app_creates_research_task():
@@ -64,3 +104,21 @@ def test_web_app_chat_requests_ticker_when_missing():
     assert payload["status"] == "needs_clarification"
     assert payload["task"] is None
     assert payload["assistant_message"]["metadata"]["needs"] == ["ticker"]
+
+
+def test_task_store_accepts_injected_intent_parser():
+    class FakeIntentParser:
+        def parse(self, message: str):
+            return {
+                "ticker": "TSLA",
+                "filing_type": "10-Q",
+                "objective": message,
+                "focus": ["revenue"],
+                "parser": "fake",
+            }
+
+    record, result = TaskStore(intent_parser=FakeIntentParser()).create_chat_task("Analyze Tesla")
+
+    assert record is not None
+    assert record.inputs == {"ticker": "TSLA", "filing_type": "10-Q"}
+    assert result["parsed"]["parser"] == "fake"

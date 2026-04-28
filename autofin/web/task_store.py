@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
+from autofin.intent import DeterministicIntentParser, IntentParser
 from autofin.runtime import ResearchOrchestrator, SkillRegistry, TraceLogger
 from autofin.schemas import ResearchTask
 from autofin.skills import SecFilingAnalysisSkill
+from autofin.skills.base import Skill
 
 
 JsonDict = Dict[str, Any]
@@ -50,10 +51,15 @@ class TaskRecord:
 
 
 class TaskStore:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        intent_parser: Optional[IntentParser] = None,
+        skills: Optional[Iterable[Skill]] = None,
+    ) -> None:
         self._tasks: Dict[str, TaskRecord] = {}
         self._lock = Lock()
-        self._registry = SkillRegistry([SecFilingAnalysisSkill()])
+        self._registry = SkillRegistry(skills or [SecFilingAnalysisSkill()])
+        self._intent_parser = intent_parser or DeterministicIntentParser()
 
     def list_skills(self) -> List[JsonDict]:
         return [
@@ -92,7 +98,7 @@ class TaskStore:
         return record
 
     def create_chat_task(self, message: str) -> tuple[Optional[TaskRecord], JsonDict]:
-        parsed = self.parse_chat_message(message)
+        parsed = self._intent_parser.parse(message)
         user_message = self._message("user", message)
 
         if not parsed.get("ticker"):
@@ -121,38 +127,6 @@ class TaskStore:
             messages=[user_message, assistant_message],
         )
         return record, {"assistant_message": assistant_message, "parsed": parsed}
-
-    def parse_chat_message(self, message: str) -> JsonDict:
-        filing_match = re.search(r"\b(10[- ]?[KQ])\b", message, flags=re.IGNORECASE)
-        filing_type = filing_match.group(1).replace(" ", "-").upper() if filing_match else "10-K"
-
-        ticker = None
-        ticker_text = re.sub(r"\b10[- ]?[KQ]\b", " ", message, flags=re.IGNORECASE)
-        ignored = {"SEC", "API", "MD", "AI", "UI", "CEO", "CFO", "USD"}
-        for match in re.finditer(r"\b[A-Z]{1,5}\b", ticker_text):
-            candidate = match.group(0)
-            if candidate not in ignored and not candidate.startswith("10"):
-                ticker = candidate
-                break
-
-        focus = []
-        lowered = message.lower()
-        if "risk" in lowered or "风险" in message:
-            focus.append("risk factors")
-        if "cash" in lowered or "现金流" in message:
-            focus.append("cash flow")
-        if "revenue" in lowered or "收入" in message:
-            focus.append("revenue")
-        if "memo" in lowered or "报告" in message:
-            focus.append("memo")
-
-        objective = message.strip() or "Analyze SEC filing"
-        return {
-            "ticker": ticker,
-            "filing_type": filing_type,
-            "objective": objective,
-            "focus": focus,
-        }
 
     def get_task(self, task_id: str) -> TaskRecord:
         with self._lock:

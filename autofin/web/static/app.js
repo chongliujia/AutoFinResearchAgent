@@ -18,6 +18,13 @@ const nodes = {
   timeline: document.querySelector("#timeline"),
   taskList: document.querySelector("#task-list"),
   skillList: document.querySelector("#skill-list"),
+  modelConfigForm: document.querySelector("#model-config-form"),
+  modelConfigState: document.querySelector("#model-config-state"),
+  modelProvider: document.querySelector("#model-provider"),
+  modelName: document.querySelector("#model-name"),
+  modelBaseUrl: document.querySelector("#model-base-url"),
+  modelApiKey: document.querySelector("#model-api-key"),
+  modelTemperature: document.querySelector("#model-temperature"),
   resultJson: document.querySelector("#result-json"),
   evidenceList: document.querySelector("#evidence-list"),
   refreshTasks: document.querySelector("#refresh-tasks"),
@@ -64,6 +71,40 @@ async function loadSkills() {
     `;
     nodes.skillList.appendChild(row);
   });
+}
+
+async function loadModelConfig() {
+  const data = await api("/api/settings/model");
+  renderModelConfig(data.model_api);
+}
+
+function renderModelConfig(config) {
+  nodes.modelProvider.value = config.provider || "openai-compatible";
+  nodes.modelName.value = config.model || "";
+  nodes.modelBaseUrl.value = config.base_url || "";
+  nodes.modelApiKey.value = "";
+  nodes.modelApiKey.placeholder = config.api_key_configured
+    ? `Configured: ${config.api_key_preview}`
+    : "Leave blank to keep existing key";
+  nodes.modelTemperature.value = config.temperature ?? 0.2;
+  nodes.modelConfigState.textContent = config.api_key_configured ? "Ready" : "Unset";
+  nodes.modelConfigState.className = `config-state ${config.api_key_configured ? "config-ready" : ""}`;
+}
+
+async function saveModelConfig(event) {
+  event.preventDefault();
+  const payload = {
+    provider: nodes.modelProvider.value,
+    model: nodes.modelName.value.trim(),
+    base_url: nodes.modelBaseUrl.value.trim(),
+    api_key: nodes.modelApiKey.value.trim(),
+    temperature: Number(nodes.modelTemperature.value || 0.2),
+  };
+  const data = await api("/api/settings/model", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  renderModelConfig(data.model_api);
 }
 
 async function loadTasks() {
@@ -336,6 +377,7 @@ function escapeHtml(value) {
 if (nodes.form) {
   nodes.form.addEventListener("submit", createTask);
 }
+nodes.modelConfigForm.addEventListener("submit", saveModelConfig);
 nodes.chatForm.addEventListener("submit", sendChat);
 nodes.refreshTasks.addEventListener("click", loadTasks);
 
@@ -347,4 +389,5 @@ renderEmpty(nodes.evidenceList, "No evidence");
 renderJson({});
 
 loadSkills();
+loadModelConfig();
 loadTasks();

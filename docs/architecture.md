@@ -59,6 +59,14 @@ LangChain 用来适配工具、模型和结构化输出。
 autofin/skills/base.py
 ```
 
+Chat intent 解析也已经接入 LangChain structured output：
+
+```text
+autofin/intent.py
+```
+
+当 Model API 已配置时，`/api/chat` 会优先用模型把用户消息解析成结构化 intent；未配置或调用失败时，自动回退到 deterministic parser。
+
 后续可以把 skills 交给 LangChain agent 或 LangGraph node 调用。
 
 ## Skill 设计
@@ -77,6 +85,14 @@ autofin/skills/base.py
 ```text
 autofin/skills/sec_filing.py
 ```
+
+当前 `sec_filing_analysis` 已经接入 SEC metadata：
+
+```text
+autofin/data/sec_client.py
+```
+
+第一版会通过 SEC company ticker map 和 submissions JSON 获取最近 10-K / 10-Q 的 filing metadata、accession number、primary document 和 SEC source URL。正文下载、section extraction 和总结会在后续迭代中加入。
 
 ## Sandbox 设计
 
@@ -126,6 +142,31 @@ autofin/web/task_store.py
 autofin/web/static/
 ```
 
+## Model API 配置
+
+模型配置集中在：
+
+```text
+autofin/config.py
+```
+
+后端启动时会读取这些环境变量：
+
+```text
+AUTOFIN_MODEL_PROVIDER
+AUTOFIN_MODEL_NAME
+AUTOFIN_MODEL_BASE_URL
+AUTOFIN_MODEL_API_KEY
+AUTOFIN_MODEL_TEMPERATURE
+AUTOFIN_SEC_USER_AGENT
+```
+
+Web UI 左侧也提供 `Model API` 面板。通过 UI 提交的配置只保存在当前后端进程内，不写入磁盘。API key 不会被接口明文返回，只会返回是否已配置以及脱敏预览。
+
+后续如果要持久化，可以接 SQLite、macOS Keychain 或其他 secret store。
+
+`AUTOFIN_SEC_USER_AGENT` 用于 SEC EDGAR 请求。实际使用时应设置成包含项目名和联系方式的值。
+
 ### Chat 入口
 
 当前 UI 支持类似 Codex app 的对话入口，但执行层仍然是结构化任务。
@@ -133,7 +174,7 @@ autofin/web/static/
 ```text
 Chat message
   ↓
-intent / field parsing
+LangChain structured output or deterministic parsing
   ↓
 structured research task
   ↓
@@ -144,13 +185,11 @@ timeline + evidence + artifact
 
 这样做的原因是：用户用自然语言表达目标，但系统需要保留权限检查、trace、evidence 和可恢复执行。
 
-现在的解析器是确定性的，代码在：
+解析器代码在：
 
 ```text
-autofin/web/task_store.py
+autofin/intent.py
 ```
-
-后续可以替换为 LangChain structured output。
 
 ## 推荐演进路线
 
