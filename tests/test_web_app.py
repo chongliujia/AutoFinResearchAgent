@@ -82,19 +82,19 @@ def test_web_app_creates_research_task():
 
 def test_web_app_creates_task_from_chat_message():
     response = client.post(
-        "/api/chat",
+        "/api/research/run",
         json={"message": "帮我分析 MSFT 最近的 10-Q，重点看风险因素和现金流"},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "task_created"
-    assert payload["parsed"]["ticker"] == "MSFT"
-    assert payload["parsed"]["filing_type"] == "10-Q"
+    assert payload["routed_intent"]["ticker"] == "MSFT"
+    assert payload["routed_intent"]["filing_type"] == "10-Q"
     assert payload["task"]["messages"][0]["role"] == "user"
 
 
-def test_web_app_chat_supports_general_conversation():
+def test_web_app_chat_routes_general_conversation():
     response = client.post(
         "/api/chat",
         json={"message": "你好，你能做什么？"},
@@ -102,10 +102,26 @@ def test_web_app_chat_supports_general_conversation():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "conversation"
+    assert payload["status"] == "routed"
     assert payload["task"] is None
     assert payload["assistant_message"]["role"] == "assistant"
-    assert payload["parsed"]["intent_type"] == "conversation"
+    assert payload["routed_intent"]["intent"] in {"general_chat", "explain_app"}
+    assert payload["policy_decision"]["action"] == "stream_chat"
+
+
+def test_web_app_chat_returns_run_research_card():
+    response = client.post(
+        "/api/chat",
+        json={"message": "帮我分析 MSFT 最近的 10-Q，重点看风险因素和现金流"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "routed"
+    assert payload["task"] is None
+    assert payload["routed_intent"]["intent"] == "research_sec_filing"
+    assert payload["policy_decision"]["action"] == "show_run_research_card"
+    assert payload["action_card"]["ticker"] == "MSFT"
 
 
 def test_web_app_streams_general_chat_response():
@@ -113,6 +129,7 @@ def test_web_app_streams_general_chat_response():
         body = response.read().decode("utf-8")
 
     assert response.status_code == 200
+    assert "event: chat-meta" in body
     assert "event: chat-token" in body
     assert "event: chat-done" in body
 
@@ -125,9 +142,10 @@ def test_web_app_chat_requests_ticker_when_missing():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "needs_clarification"
+    assert payload["status"] == "routed"
     assert payload["task"] is None
-    assert payload["assistant_message"]["metadata"]["needs"] == ["ticker"]
+    assert payload["policy_decision"]["action"] == "ask_clarification"
+    assert payload["routed_intent"]["missing_fields"] == ["ticker"]
 
 
 def test_task_store_accepts_injected_intent_parser():

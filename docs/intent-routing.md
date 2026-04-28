@@ -346,7 +346,7 @@ Assistant:
   Market data skill is not implemented yet. I can add it next.
 ```
 
-## Fallback Strategy
+## Routing Failure Strategy
 
 LLM routing can fail due to:
 
@@ -356,25 +356,25 @@ LLM routing can fail due to:
 - unsupported structured output
 - provider-specific schema limitations
 
-Fallback hierarchy:
+Routing hierarchy:
 
 ```text
 LLM structured output
   ↓
 LLM JSON prompt
   ↓
-deterministic router
-  ↓
-unknown / clarification
+intent_routing_failed
 ```
+
+The app should not silently fall back from a configured LLM router to deterministic rules. Silent fallback makes it difficult to know whether the product is actually using the configured model.
 
 The response should expose routing metadata:
 
 ```json
 {
-  "router": "llm_json_prompt",
-  "fallback_used": false,
-  "router_error": null
+  "router": "langchain_error",
+  "intent": "intent_routing_failed",
+  "router_error": "..."
 }
 ```
 
@@ -616,6 +616,16 @@ Until then, deterministic policy plus logged feedback is the safer engineering p
 
 ## Implementation Plan
 
+Current implementation status:
+
+- `autofin/intent_router.py` defines `RoutedIntent`, `DeterministicIntentRouter`, and `LLMIntentRouter`.
+- `LLMIntentRouter` does not silently fall back when a configured model fails. It returns `intent_routing_failed` so the UI can show the real routing problem.
+- `autofin/policy.py` defines `PolicyEngine`, `PolicyDecision`, and local JSONL policy logging.
+- `/api/chat` returns routing and policy metadata without auto-running research.
+- `/api/chat/stream` emits `chat-meta`, then streams the assistant response.
+- `/api/research/run` creates the SEC filing research task after explicit user confirmation.
+- The Web UI renders an intent chip and a `Run Research` action card for executable SEC filing requests.
+
 ### Step 1: Add RoutedIntent
 
 Add:
@@ -706,12 +716,12 @@ Write them into a local JSONL or SQLite table for later evaluation.
 
 ## Recommendation
 
-Use the LLM as the primary router, but keep execution policy deterministic.
+Use the LLM as the router, but keep execution policy deterministic.
 
 For the next coding step:
 
 1. Add `RoutedIntent` and `LLMIntentRouter`.
-2. Add deterministic fallback with the expanded taxonomy.
+2. Add explicit routing failure states instead of silent deterministic fallback.
 3. Add deterministic `PolicyEngine`.
 4. Return routing and policy metadata from chat endpoints.
 5. Add an intent chip to the UI.

@@ -21,7 +21,9 @@ The repository now contains a runnable Python MVP:
 - Server-Sent Events for task activity streaming
 - Inline, collapsible tool-call cards in the chat flow
 - Model API configuration through environment variables and the local UI
-- LangChain structured-output parser for chat intent, with deterministic fallback
+- LangChain structured-output router for chat intent, with visible LLM failure states
+- Routed intent + deterministic policy layer for explicit research execution
+- Intent chip and `Run Research` action card in the chat UI
 - Tests for runtime, permissions, skills, orchestrator, and Web API
 
 ## Architecture
@@ -84,6 +86,8 @@ autofin/
   data/
     sec_client.py         # SEC company ticker and submissions client
   intent.py               # chat intent parsing
+  intent_router.py        # routed intent taxonomy and LLM router
+  policy.py               # deterministic execution policy and policy log
   web/
     app.py                # FastAPI routes
     task_store.py         # in-memory task/session store
@@ -204,7 +208,9 @@ The backend parses this into a structured task:
 }
 ```
 
-If a model API key and model name are configured, `/api/chat` uses LangChain structured output to classify and parse the request. Without model configuration, it falls back to the deterministic parser so the app remains usable offline.
+Chat routing uses the configured LLM through LangChain structured output. If Model API is not configured, the UI asks the user to configure it instead of pretending to classify the message. If the model call fails or returns invalid routing JSON, the UI shows an explicit routing error instead of silently falling back to rules.
+
+`Send` does not automatically execute research. It streams the assistant reply and shows routing metadata. When the policy decides a request is executable research, the UI shows a `Run Research` card; clicking it calls `/api/research/run` and starts the LangGraph task.
 
 During execution, the chat stream shows collapsible tool-call cards:
 
@@ -252,6 +258,8 @@ Chat:
 
 ```http
 POST /api/chat
+POST /api/chat/stream
+POST /api/research/run
 ```
 
 Example:

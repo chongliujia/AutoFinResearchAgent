@@ -306,6 +306,93 @@ p {
   background: #fffdf8;
 }
 
+.route-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f9fbff;
+  padding: 11px 12px;
+}
+
+.route-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.intent-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: #e8eefb;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.policy-action {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.route-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.route-fields span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.run-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.run-card strong,
+.run-card span {
+  display: block;
+}
+
+.run-card strong {
+  font-size: 13px;
+}
+
+.run-card span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-card button {
+  background: var(--text);
+  color: white;
+  border-color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.run-card button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
 .payload-section {
   margin-top: 10px;
   padding-top: 10px;
@@ -607,6 +694,11 @@ select:focus {
   }
 
   .composer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .run-card {
     align-items: stretch;
     flex-direction: column;
   }

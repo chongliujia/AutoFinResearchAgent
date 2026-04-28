@@ -59,13 +59,16 @@ LangChain 用来适配工具、模型和结构化输出。
 autofin/skills/base.py
 ```
 
-Chat intent routing 也已经接入 LangChain structured output：
+Chat intent routing 现在分成两层：
 
 ```text
-autofin/intent.py
+autofin/intent_router.py
+autofin/policy.py
 ```
 
-当 Model API 已配置时，`/api/chat` 会优先用模型判断用户消息是普通对话还是研究任务，并把研究任务解析成结构化 intent；未配置或调用失败时，自动回退到 deterministic parser。
+当 Model API 已配置时，`LLMIntentRouter` 用 LangChain structured output 判断用户消息属于普通对话、配置问题、SEC filing 研究、行情、新闻、报告等 intent。这里不做静默 deterministic fallback：未配置模型时返回配置提示；模型调用失败或输出格式无效时返回显式 routing error。
+
+`PolicyEngine` 是执行边界。LLM 只负责分类和抽取字段，不直接创建任务。`research_sec_filing` 在字段完整时会返回 `show_run_research_card`，UI 需要用户点击 `Run Research` 后才会调用 `/api/research/run` 创建 LangGraph 任务。
 
 后续可以把 skills 交给 LangChain agent 或 LangGraph node 调用。
 

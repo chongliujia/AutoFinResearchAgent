@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from autofin.config import ModelConfigStore
 from autofin.intent import LangChainChatResponder, LangChainIntentParser
+from autofin.intent_router import LLMIntentRouter
 from autofin.web.task_store import TaskStore
 
 
@@ -42,6 +43,7 @@ app = FastAPI(title="AutoFinResearchAgent")
 model_config_store = ModelConfigStore()
 store = TaskStore(
     intent_parser=LangChainIntentParser(model_config_store),
+    intent_router=LLMIntentRouter(model_config_store),
     chat_responder=LangChainChatResponder(model_config_store),
 )
 
@@ -94,11 +96,19 @@ def create_task(request: CreateTaskRequest, background_tasks: BackgroundTasks):
 
 @app.post("/api/chat")
 def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
-    record, chat_result = store.create_chat_task(request.message)
+    return {
+        "status": "routed",
+        "task": None,
+        **store.preview_chat(request.message),
+    }
+
+
+@app.post("/api/research/run")
+def run_research_from_chat(request: ChatRequest, background_tasks: BackgroundTasks):
+    record, chat_result = store.create_research_task_from_message(request.message)
     if record is None:
-        status = "conversation" if chat_result.get("conversation") else "needs_clarification"
         return {
-            "status": status,
+            "status": chat_result["policy_decision"]["action"],
             "task": None,
             **chat_result,
         }
@@ -114,8 +124,8 @@ def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
 @app.post("/api/chat/stream")
 def stream_chat(request: ChatRequest):
     async def stream():
-        for chunk in store.stream_chat_reply(request.message):
-            yield f"event: chat-token\ndata: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+        for event_name, payload in store.stream_chat_events(request.message):
+            yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
         yield f"event: chat-done\ndata: {json.dumps({'status': 'done'}, ensure_ascii=False)}\n\n"
 

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
 from autofin.intent import ChatResponder, DeterministicChatResponder, DeterministicIntentParser, IntentParser
+from autofin.intent_router import DeterministicIntentRouter, IntentRouter
+from autofin.policy import PolicyEngine, PolicyLogger
 from autofin.runtime import ResearchOrchestrator, SkillRegistry, TraceLogger
 from autofin.schemas import ResearchTask
 from autofin.skills import SecFilingAnalysisSkill
@@ -54,6 +57,9 @@ class TaskStore:
     def __init__(
         self,
         intent_parser: Optional[IntentParser] = None,
+        intent_router: Optional[IntentRouter] = None,
+        policy_engine: Optional[PolicyEngine] = None,
+        policy_logger: Optional[PolicyLogger] = None,
         chat_responder: Optional[ChatResponder] = None,
         skills: Optional[Iterable[Skill]] = None,
     ) -> None:
@@ -61,6 +67,9 @@ class TaskStore:
         self._lock = Lock()
         self._registry = SkillRegistry(skills or [SecFilingAnalysisSkill()])
         self._intent_parser = intent_parser or DeterministicIntentParser()
+        self._intent_router = intent_router or DeterministicIntentRouter()
+        self._policy_engine = policy_engine or PolicyEngine()
+        self._policy_logger = policy_logger or PolicyLogger(Path(".autofin/policy/events.jsonl"))
         self._chat_responder = chat_responder or DeterministicChatResponder()
 
     def list_skills(self) -> List[JsonDict]:
@@ -142,6 +151,87 @@ class TaskStore:
             messages=[user_message, assistant_message],
         )
         return record, {"assistant_message": assistant_message, "parsed": parsed}
+
+    def preview_chat(self, message: str) -> JsonDict:
+        routed_intent, policy_decision = self.route_message(message)
+        assistant_message = self._message(
+            "assistant",
+            self._reply_for_policy(routed_intent, policy_decision),
+            {"routed_intent": routed_intent, "policy_decision": policy_decision},
+        )
+        return {
+            "routed_intent": routed_intent,
+            "policy_decision": policy_decision,
+            "assistant_message": assistant_message,
+            "action_card": self._action_card(routed_intent, policy_decision),
+        }
+
+    def create_research_task_from_message(self, message: str) -> tuple[Optional[TaskRecord], JsonDict]:
+        routed_intent, policy_decision = self.route_message(message)
+        result = {
+            "routed_intent": routed_intent,
+            "policy_decision": policy_decision,
+            "action_card": self._action_card(routed_intent, policy_decision),
+        }
+        if policy_decision.get("action") != "show_run_research_card":
+            assistant_message = self._message(
+                "assistant",
+                self._reply_for_policy(routed_intent, policy_decision),
+                {"routed_intent": routed_intent, "policy_decision": policy_decision},
+            )
+            result["assistant_message"] = assistant_message
+            return None, result
+
+        ticker = routed_intent["ticker"]
+        filing_type = routed_intent.get("filing_type") or "10-K"
+        objective = self._objective_from_routed_intent(message, routed_intent)
+        assistant_message = self._message(
+            "assistant",
+            (
+                f"已创建研究任务：使用 sec_filing_analysis 分析 "
+                f"{ticker} 的 {filing_type}。执行过程会在 Timeline 和 Evidence 面板里展示。"
+            ),
+            {"ticker": ticker, "filing_type": filing_type, "skill_name": "sec_filing_analysis"},
+        )
+        record = self.create_task(
+            objective=objective,
+            skill_name="sec_filing_analysis",
+            inputs={"ticker": ticker, "filing_type": filing_type},
+            messages=[self._message("user", message), assistant_message],
+        )
+        policy_decision["created_task_id"] = record.id
+        result["policy_decision"] = policy_decision
+        result["assistant_message"] = assistant_message
+        self._policy_logger.log(
+            message,
+            routed_intent,
+            policy_decision,
+            {"user_clicked_run": True, "created_task_id": record.id},
+        )
+        return record, result
+
+    def route_message(self, message: str) -> tuple[JsonDict, JsonDict]:
+        routed_intent = self._intent_router.route(message)
+        policy_decision = self._policy_engine.decide(routed_intent)
+        self._policy_logger.log(message, routed_intent, policy_decision)
+        return routed_intent, policy_decision
+
+    def stream_chat_events(self, message: str):
+        routed_intent, policy_decision = self.route_message(message)
+        yield "chat-meta", {
+            "routed_intent": routed_intent,
+            "policy_decision": policy_decision,
+            "action_card": self._action_card(routed_intent, policy_decision),
+        }
+
+        if policy_decision.get("action") == "stream_chat":
+            for chunk in self._chat_responder.stream_reply(message):
+                yield "chat-token", {"content": chunk}
+            return
+
+        reply = self._reply_for_policy(routed_intent, policy_decision)
+        if reply:
+            yield "chat-token", {"content": reply}
 
     def stream_chat_reply(self, message: str):
         yield from self._chat_responder.stream_reply(message)
@@ -260,3 +350,41 @@ class TaskStore:
             "metadata": metadata or {},
             "timestamp": utc_now(),
         }
+
+    def _reply_for_policy(self, routed_intent: JsonDict, policy_decision: JsonDict) -> str:
+        action = policy_decision.get("action")
+        if action == "ask_clarification":
+            missing = routed_intent.get("missing_fields") or policy_decision.get("missing_fields") or []
+            if "ticker" in missing:
+                return "我需要一个股票代码才能开始研究。比如：分析 AAPL 最近的 10-K，重点看风险因素和现金流。"
+            return "我还需要一点信息才能继续。请补充公司、数据来源或你希望的输出格式。"
+        if action == "show_run_research_card":
+            ticker = routed_intent.get("ticker")
+            filing_type = routed_intent.get("filing_type") or "10-K"
+            focus = ", ".join(routed_intent.get("focus") or []) or "general filing analysis"
+            return f"我识别到一个 SEC filing 研究请求：{ticker} {filing_type}，重点：{focus}。确认后我再启动研究任务。"
+        if action == "unsupported_response":
+            return routed_intent.get("assistant_reply") or policy_decision.get("reason") or "这个能力还没有实现。"
+        if action == "routing_error":
+            return routed_intent.get("assistant_reply") or "LLM 意图识别失败。请检查模型配置后再试。"
+        return routed_intent.get("assistant_reply") or ""
+
+    def _action_card(self, routed_intent: JsonDict, policy_decision: JsonDict) -> Optional[JsonDict]:
+        if policy_decision.get("action") != "show_run_research_card":
+            return None
+        return {
+            "title": f"Analyze {routed_intent.get('ticker')} {routed_intent.get('filing_type') or '10-K'}",
+            "skill_name": "sec_filing_analysis",
+            "ticker": routed_intent.get("ticker"),
+            "filing_type": routed_intent.get("filing_type") or "10-K",
+            "focus": routed_intent.get("focus") or [],
+            "requires_confirmation": True,
+        }
+
+    def _objective_from_routed_intent(self, message: str, routed_intent: JsonDict) -> str:
+        focus = ", ".join(routed_intent.get("focus") or [])
+        ticker = routed_intent.get("ticker")
+        filing_type = routed_intent.get("filing_type") or "10-K"
+        if focus:
+            return f"Analyze {ticker} {filing_type}, focusing on {focus}. User request: {message}"
+        return message.strip() or f"Analyze {ticker} {filing_type}"

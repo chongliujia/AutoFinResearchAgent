@@ -398,11 +398,86 @@ async function streamChatReply(message, row) {
     buffer = events.pop() || "";
     for (const rawEvent of events) {
       const event = parseSSE(rawEvent);
+      if (event.event === "chat-meta") {
+        appendRouteCard(event.data, message);
+      }
       if (event.event === "chat-token") {
         content += event.data.content || "";
         updateChatMessage(row, { role: "assistant", content });
       }
     }
+  }
+}
+
+function appendRouteCard(meta, message) {
+  const routed = meta.routed_intent || {};
+  const policy = meta.policy_decision || {};
+  const actionCard = meta.action_card;
+  const row = document.createElement("div");
+  row.className = "chat-event";
+
+  const confidence = typeof routed.confidence === "number" ? routed.confidence.toFixed(2) : "n/a";
+  const fields = [
+    routed.ticker ? `Ticker: ${routed.ticker}` : "",
+    routed.filing_type ? `Filing: ${routed.filing_type}` : "",
+    routed.focus?.length ? `Focus: ${routed.focus.join(", ")}` : "",
+    routed.missing_fields?.length ? `Missing: ${routed.missing_fields.join(", ")}` : "",
+  ].filter(Boolean);
+
+  row.innerHTML = `
+    <div class="route-card">
+      <div class="route-card-header">
+        <span class="intent-chip">${escapeHtml(routed.intent || "unknown")} · ${escapeHtml(confidence)}</span>
+        <span class="policy-action">${escapeHtml(policy.action || "route")}</span>
+      </div>
+      ${fields.length ? `<div class="route-fields">${fields.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      ${actionCard ? renderRunResearchCard(actionCard) : ""}
+    </div>
+  `;
+
+  const button = row.querySelector("[data-run-research]");
+  if (button) {
+    button.addEventListener("click", () => runResearch(message, button));
+  }
+  nodes.chatLog.appendChild(row);
+  nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
+}
+
+function renderRunResearchCard(actionCard) {
+  const focus = actionCard.focus?.length ? actionCard.focus.join(", ") : "general filing analysis";
+  return `
+    <div class="run-card">
+      <div>
+        <strong>${escapeHtml(actionCard.title || "Run research")}</strong>
+        <span>${escapeHtml(actionCard.skill_name || "sec_filing_analysis")} · ${escapeHtml(focus)}</span>
+      </div>
+      <button type="button" data-run-research>Run Research</button>
+    </div>
+  `;
+}
+
+async function runResearch(message, button) {
+  button.disabled = true;
+  button.textContent = "Running";
+  setStatus("Queued");
+  try {
+    const payload = await api("/api/research/run", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
+    if (!payload.task) {
+      appendChatMessage(payload.assistant_message || { role: "assistant", content: "这个请求还不能执行。" });
+      setStatus("Idle");
+      return;
+    }
+    appendChatMessage(payload.assistant_message);
+    await loadTasks();
+    await openTask(payload.task.id);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Run Research";
+    appendChatMessage({ role: "assistant", content: `启动研究失败：${error.message}` });
+    setStatus("Idle");
   }
 }
 
