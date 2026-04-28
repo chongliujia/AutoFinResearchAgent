@@ -2,7 +2,7 @@
 
 AutoFinResearchAgent is a local-first, skill-based runtime for auditable financial research agents.
 
-The project is being built as a financial research agent workspace: users describe research goals in natural language, the runtime turns them into structured tasks, LangGraph executes the workflow, skills do the domain work, and the UI exposes tool calls, evidence, traces, and results.
+The project is being built as a financial research agent workspace: users can chat normally, describe research goals in natural language, and let the runtime turn executable research requests into structured tasks. LangGraph executes the workflow, skills do the domain work, and the UI exposes tool calls, evidence, traces, and results.
 
 ## Current MVP
 
@@ -17,6 +17,7 @@ The repository now contains a runnable Python MVP:
 - SEC submissions API client for filing metadata and source links
 - FastAPI service layer
 - Chat-first local Web UI inspired by agent apps such as Codex
+- General conversation support without forcing every message into a task
 - Server-Sent Events for task activity streaming
 - Inline, collapsible tool-call cards in the chat flow
 - Model API configuration through environment variables and the local UI
@@ -129,6 +130,15 @@ export AUTOFIN_SEC_USER_AGENT="AutoFinResearchAgent your-email@example.com"
 
 You can also configure these values in the local Web UI. API keys are never returned by the API in plaintext.
 
+UI-saved model settings persist locally:
+
+```text
+.autofin/config.json    # provider, model, base_url, temperature
+.autofin/secrets.json   # api_key
+```
+
+The `.autofin/` directory is gitignored.
+
 ## CLI Usage
 
 Run the current mock SEC filing skill through the LangGraph runtime:
@@ -157,10 +167,11 @@ The UI is chat-first, but the execution layer remains structured and auditable.
 User message
   |
   v
-LangChain structured parser or deterministic fallback
+intent routing
   |
-  v
-structured research task
+  +--> general conversation reply
+  |
+  +--> structured research task
   |
   v
 LangGraph workflow
@@ -193,7 +204,7 @@ The backend parses this into a structured task:
 }
 ```
 
-If a model API key and model name are configured, `/api/chat` uses LangChain structured output to parse the request. Without model configuration, it falls back to the deterministic parser so the app remains usable offline.
+If a model API key and model name are configured, `/api/chat` uses LangChain structured output to classify and parse the request. Without model configuration, it falls back to the deterministic parser so the app remains usable offline.
 
 During execution, the chat stream shows collapsible tool-call cards:
 

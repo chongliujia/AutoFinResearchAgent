@@ -6,7 +6,7 @@ from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
-from autofin.intent import DeterministicIntentParser, IntentParser
+from autofin.intent import ChatResponder, DeterministicChatResponder, DeterministicIntentParser, IntentParser
 from autofin.runtime import ResearchOrchestrator, SkillRegistry, TraceLogger
 from autofin.schemas import ResearchTask
 from autofin.skills import SecFilingAnalysisSkill
@@ -54,12 +54,14 @@ class TaskStore:
     def __init__(
         self,
         intent_parser: Optional[IntentParser] = None,
+        chat_responder: Optional[ChatResponder] = None,
         skills: Optional[Iterable[Skill]] = None,
     ) -> None:
         self._tasks: Dict[str, TaskRecord] = {}
         self._lock = Lock()
         self._registry = SkillRegistry(skills or [SecFilingAnalysisSkill()])
         self._intent_parser = intent_parser or DeterministicIntentParser()
+        self._chat_responder = chat_responder or DeterministicChatResponder()
 
     def list_skills(self) -> List[JsonDict]:
         return [
@@ -101,6 +103,19 @@ class TaskStore:
         parsed = self._intent_parser.parse(message)
         user_message = self._message("user", message)
 
+        if parsed.get("intent_type") == "conversation":
+            reply, responder_metadata = self._chat_responder.reply(message)
+            assistant_message = self._message(
+                "assistant",
+                reply or parsed.get("reply") or "我在。你可以和我普通对话，也可以让我创建金融研究任务。",
+                {"intent_type": "conversation", **responder_metadata},
+            )
+            return None, {
+                "assistant_message": assistant_message,
+                "parsed": parsed,
+                "conversation": True,
+            }
+
         if not parsed.get("ticker"):
             assistant_message = self._message(
                 "assistant",
@@ -127,6 +142,9 @@ class TaskStore:
             messages=[user_message, assistant_message],
         )
         return record, {"assistant_message": assistant_message, "parsed": parsed}
+
+    def stream_chat_reply(self, message: str):
+        yield from self._chat_responder.stream_reply(message)
 
     def get_task(self, task_id: str) -> TaskRecord:
         with self._lock:

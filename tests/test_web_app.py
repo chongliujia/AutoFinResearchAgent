@@ -25,6 +25,7 @@ class FakeSECClient:
 
 
 web_app.store = TaskStore(skills=[SecFilingAnalysisSkill(FakeSECClient())])
+web_app.model_config_store.persist = False
 client = TestClient(web_app.app)
 
 
@@ -93,6 +94,29 @@ def test_web_app_creates_task_from_chat_message():
     assert payload["task"]["messages"][0]["role"] == "user"
 
 
+def test_web_app_chat_supports_general_conversation():
+    response = client.post(
+        "/api/chat",
+        json={"message": "你好，你能做什么？"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "conversation"
+    assert payload["task"] is None
+    assert payload["assistant_message"]["role"] == "assistant"
+    assert payload["parsed"]["intent_type"] == "conversation"
+
+
+def test_web_app_streams_general_chat_response():
+    with client.stream("POST", "/api/chat/stream", json={"message": "你好"}) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "event: chat-token" in body
+    assert "event: chat-done" in body
+
+
 def test_web_app_chat_requests_ticker_when_missing():
     response = client.post(
         "/api/chat",
@@ -110,10 +134,12 @@ def test_task_store_accepts_injected_intent_parser():
     class FakeIntentParser:
         def parse(self, message: str):
             return {
+                "intent_type": "research_task",
                 "ticker": "TSLA",
                 "filing_type": "10-Q",
                 "objective": message,
                 "focus": ["revenue"],
+                "reply": "",
                 "parser": "fake",
             }
 
@@ -122,3 +148,34 @@ def test_task_store_accepts_injected_intent_parser():
     assert record is not None
     assert record.inputs == {"ticker": "TSLA", "filing_type": "10-Q"}
     assert result["parsed"]["parser"] == "fake"
+
+
+def test_task_store_accepts_injected_chat_responder():
+    class ConversationParser:
+        def parse(self, message: str):
+            return {
+                "intent_type": "conversation",
+                "ticker": None,
+                "filing_type": "10-K",
+                "objective": message,
+                "focus": [],
+                "reply": "",
+                "parser": "fake",
+            }
+
+    class FakeChatResponder:
+        def reply(self, message: str):
+            return "model-backed reply", {"responder": "fake_model"}
+
+        def stream_reply(self, message: str):
+            yield "model-backed"
+            yield " reply"
+
+    record, result = TaskStore(
+        intent_parser=ConversationParser(),
+        chat_responder=FakeChatResponder(),
+    ).create_chat_task("hello")
+
+    assert record is None
+    assert result["assistant_message"]["content"] == "model-backed reply"
+    assert result["assistant_message"]["metadata"]["responder"] == "fake_model"

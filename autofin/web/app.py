@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from autofin.config import ModelConfigStore
-from autofin.intent import LangChainIntentParser
+from autofin.intent import LangChainChatResponder, LangChainIntentParser
 from autofin.web.task_store import TaskStore
 
 
@@ -40,7 +40,10 @@ class ModelConfigRequest(BaseModel):
 
 app = FastAPI(title="AutoFinResearchAgent")
 model_config_store = ModelConfigStore()
-store = TaskStore(intent_parser=LangChainIntentParser(model_config_store))
+store = TaskStore(
+    intent_parser=LangChainIntentParser(model_config_store),
+    chat_responder=LangChainChatResponder(model_config_store),
+)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -93,8 +96,9 @@ def create_task(request: CreateTaskRequest, background_tasks: BackgroundTasks):
 def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
     record, chat_result = store.create_chat_task(request.message)
     if record is None:
+        status = "conversation" if chat_result.get("conversation") else "needs_clarification"
         return {
-            "status": "needs_clarification",
+            "status": status,
             "task": None,
             **chat_result,
         }
@@ -105,6 +109,17 @@ def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
         "task": record.public_view(),
         **chat_result,
     }
+
+
+@app.post("/api/chat/stream")
+def stream_chat(request: ChatRequest):
+    async def stream():
+        for chunk in store.stream_chat_reply(request.message):
+            yield f"event: chat-token\ndata: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+        yield f"event: chat-done\ndata: {json.dumps({'status': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.get("/api/tasks/{task_id}")

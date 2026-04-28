@@ -205,6 +205,16 @@ function appendChatMessage(message) {
   `;
   nodes.chatLog.appendChild(row);
   nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
+  return row;
+}
+
+function updateChatMessage(row, message) {
+  row.className = `chat-message chat-${message.role}`;
+  row.innerHTML = `
+    <div class="chat-role">${escapeHtml(message.role)}</div>
+    <div class="chat-content">${escapeHtml(message.content)}</div>
+  `;
+  nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
 }
 
 function appendInlineEvent(event) {
@@ -347,22 +357,60 @@ async function sendChat(event) {
   }
 
   renderChatMessages([{ role: "user", content: message }]);
+  const pendingRow = appendChatMessage({ role: "assistant", content: "" });
   nodes.chatMessage.value = "";
   setStatus("Queued");
 
-  const response = await api("/api/chat", {
+  try {
+    await streamChatReply(message, pendingRow);
+    setStatus("Idle");
+  } catch (error) {
+    updateChatMessage(pendingRow, {
+      role: "assistant",
+      content: `请求失败：${error.message}`,
+    });
+    setStatus("Idle");
+  }
+}
+
+async function streamChatReply(message, row) {
+  const response = await fetch("/api/chat/stream", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
   });
-
-  if (response.status === "needs_clarification") {
-    appendChatMessage(response.assistant_message);
-    setStatus("Idle");
-    return;
+  if (!response.ok || !response.body) {
+    throw new Error(`${response.status} ${response.statusText}`);
   }
 
-  await loadTasks();
-  await openTask(response.task.id);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      const event = parseSSE(rawEvent);
+      if (event.event === "chat-token") {
+        content += event.data.content || "";
+        updateChatMessage(row, { role: "assistant", content });
+      }
+    }
+  }
+}
+
+function parseSSE(rawEvent) {
+  const lines = rawEvent.split("\n");
+  const eventType = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+  const dataLine = lines.find((line) => line.startsWith("data:"))?.slice(5).trim() || "{}";
+  return { event: eventType, data: JSON.parse(dataLine) };
 }
 
 function escapeHtml(value) {
