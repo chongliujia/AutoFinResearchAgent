@@ -28,3 +28,12 @@ def test_sec_client_resolves_latest_filing_metadata():
     assert filing.company_name == "Apple Inc."
     assert filing.accession_number == "0000320193-25-000079"
     assert filing.document_url.endswith("/320193/000032019325000079/aapl-20250927.htm")
+
+
+def test_sec_client_fetches_filing_document_with_injected_fetcher():
+    client = SECClient(fetch_json=lambda url: {}, fetch_text=lambda url: "<html>filing</html>")
+
+    class Filing:
+        document_url = "https://www.sec.gov/Archives/test.htm"
+
+    assert client.fetch_filing_document(Filing()) == "<html>filing</html>"

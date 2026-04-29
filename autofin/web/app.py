@@ -29,6 +29,7 @@ class CreateTaskRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: Optional[str] = None
 
 
 class ModelConfigRequest(BaseModel):
@@ -81,6 +82,37 @@ def list_tasks():
     return {"tasks": store.list_tasks()}
 
 
+@app.get("/api/sessions")
+def list_sessions():
+    return {"sessions": store.list_sessions()}
+
+
+@app.post("/api/sessions")
+def create_session():
+    return {"session": store.create_session()}
+
+
+@app.delete("/api/sessions")
+def delete_all_sessions():
+    return store.delete_all_sessions()
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str):
+    try:
+        return {"session": store.get_session(session_id)}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str):
+    try:
+        return store.delete_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/tasks")
 def create_task(request: CreateTaskRequest, background_tasks: BackgroundTasks):
     inputs = dict(request.inputs)
@@ -99,13 +131,13 @@ def create_chat_task(request: ChatRequest, background_tasks: BackgroundTasks):
     return {
         "status": "routed",
         "task": None,
-        **store.preview_chat(request.message),
+        **store.preview_chat(request.message, session_id=request.session_id),
     }
 
 
 @app.post("/api/research/run")
 def run_research_from_chat(request: ChatRequest, background_tasks: BackgroundTasks):
-    record, chat_result = store.create_research_task_from_message(request.message)
+    record, chat_result = store.create_research_task_from_message(request.message, session_id=request.session_id)
     if record is None:
         return {
             "status": chat_result["policy_decision"]["action"],
@@ -124,7 +156,7 @@ def run_research_from_chat(request: ChatRequest, background_tasks: BackgroundTas
 @app.post("/api/chat/stream")
 def stream_chat(request: ChatRequest):
     async def stream():
-        for event_name, payload in store.stream_chat_events(request.message):
+        for event_name, payload in store.stream_chat_events(request.message, session_id=request.session_id):
             yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
         yield f"event: chat-done\ndata: {json.dumps({'status': 'done'}, ensure_ascii=False)}\n\n"

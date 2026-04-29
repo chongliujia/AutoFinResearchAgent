@@ -1,4 +1,5 @@
 const state = {
+  activeSessionId: null,
   activeTaskId: null,
   eventSource: null,
   inlineEventKeys: new Set(),
@@ -15,6 +16,7 @@ const nodes = {
   objective: document.querySelector("#objective"),
   runtimeStatus: document.querySelector("#runtime-status"),
   activeTaskId: document.querySelector("#active-task-id"),
+  sessionMemory: document.querySelector("#session-memory"),
   timeline: document.querySelector("#timeline"),
   taskList: document.querySelector("#task-list"),
   skillList: document.querySelector("#skill-list"),
@@ -28,6 +30,8 @@ const nodes = {
   resultJson: document.querySelector("#result-json"),
   evidenceList: document.querySelector("#evidence-list"),
   refreshTasks: document.querySelector("#refresh-tasks"),
+  newSession: document.querySelector("#new-session"),
+  clearSessions: document.querySelector("#clear-sessions"),
 };
 
 async function api(path, options = {}) {
@@ -107,28 +111,128 @@ async function saveModelConfig(event) {
   renderModelConfig(data.model_api);
 }
 
-async function loadTasks() {
-  const data = await api("/api/tasks");
+async function loadSessions() {
+  const data = await api("/api/sessions");
   nodes.taskList.innerHTML = "";
-  if (!data.tasks.length) {
+  if (!data.sessions.length) {
     renderEmpty(nodes.taskList, "No sessions");
     return;
   }
-  data.tasks.forEach((task) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "task-row";
-    button.innerHTML = `
-      <strong>${escapeHtml(task.inputs.ticker || task.skill_name)}</strong>
-      <span class="status-${escapeHtml(task.status)}">${escapeHtml(task.status)}</span>
-      <span>${escapeHtml(task.id.slice(0, 8))}</span>
+  if (!state.activeSessionId) {
+    state.activeSessionId = data.sessions[0].id;
+  }
+  data.sessions.forEach((session) => {
+    const row = document.createElement("div");
+    row.className = `task-row ${session.id === state.activeSessionId ? "active" : ""}`;
+    row.innerHTML = `
+      <button type="button" class="session-open-button">
+        <strong>${escapeHtml(session.title || "New session")}</strong>
+        <span>${escapeHtml(session.working_entities?.last_intent || "conversation")}</span>
+        <span>${escapeHtml(session.id.slice(0, 12))}</span>
+      </button>
+      <span class="session-row-actions">
+        <button type="button" data-delete-session="${escapeHtml(session.id)}" title="Delete session">Delete</button>
+      </span>
     `;
-    button.addEventListener("click", () => openTask(task.id));
-    nodes.taskList.appendChild(button);
+    row.querySelector(".session-open-button").addEventListener("click", () => openSession(session.id));
+    const deleteButton = row.querySelector("[data-delete-session]");
+    deleteButton.addEventListener("click", (event) => deleteSession(event, session.id, session.title));
+    nodes.taskList.appendChild(row);
+  });
+  if (state.activeSessionId) {
+    await openSession(state.activeSessionId);
+  }
+}
+
+async function newSession() {
+  const data = await api("/api/sessions", { method: "POST", body: JSON.stringify({}) });
+  state.activeSessionId = data.session.id;
+  state.activeTaskId = null;
+  nodes.activeTaskId.textContent = "No active task";
+  nodes.timeline.innerHTML = "";
+  renderJson({});
+  renderEmpty(nodes.evidenceList, "No evidence");
+  renderSessionMemory(data.session);
+  renderChatMessages([]);
+  await loadSessions();
+}
+
+async function deleteSession(event, sessionId, title) {
+  event.stopPropagation();
+  const confirmed = window.confirm(`Delete session "${title || sessionId}"? This removes its local conversation memory and transcript.`);
+  if (!confirmed) {
+    return;
+  }
+  const data = await api(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  state.activeSessionId = data.active_session?.id || null;
+  await loadSessions();
+  if (state.activeSessionId) {
+    await openSession(state.activeSessionId);
+  }
+}
+
+async function clearSessions() {
+  const confirmed = window.confirm("Delete all local sessions? This removes all conversation memory and transcripts.");
+  if (!confirmed) {
+    return;
+  }
+  const data = await api("/api/sessions", { method: "DELETE" });
+  state.activeSessionId = data.active_session?.id || null;
+  state.activeTaskId = null;
+  nodes.activeTaskId.textContent = "No active task";
+  nodes.timeline.innerHTML = "";
+  renderJson({});
+  renderEmpty(nodes.evidenceList, "No evidence");
+  await loadSessions();
+}
+
+async function openSession(sessionId) {
+  state.activeSessionId = sessionId;
+  const data = await api(`/api/sessions/${sessionId}`);
+  renderChatMessages(data.session.messages || []);
+  if (data.session.active_task_id) {
+    nodes.activeTaskId.textContent = data.session.active_task_id;
+    state.activeTaskId = data.session.active_task_id;
+    try {
+      await loadTaskResult(data.session.active_task_id);
+    } catch (error) {
+      renderMissingTask(data.session.active_task_id, error, data.session);
+    }
+  } else {
+    state.activeTaskId = null;
+    nodes.activeTaskId.textContent = "No active task";
+    renderJson({});
+    renderEmpty(nodes.evidenceList, "No evidence");
+  }
+  renderSessionMemory(data.session);
+  nodes.taskList.querySelectorAll(".task-row").forEach((row) => row.classList.remove("active"));
+  await loadSessionsHeaderOnly();
+}
+
+async function loadSessionsHeaderOnly() {
+  const data = await api("/api/sessions");
+  nodes.taskList.innerHTML = "";
+  data.sessions.forEach((session) => {
+    const row = document.createElement("div");
+    row.className = `task-row ${session.id === state.activeSessionId ? "active" : ""}`;
+    row.innerHTML = `
+      <button type="button" class="session-open-button">
+        <strong>${escapeHtml(session.title || "New session")}</strong>
+        <span>${escapeHtml(session.working_entities?.last_intent || "conversation")}</span>
+        <span>${escapeHtml(session.id.slice(0, 12))}</span>
+      </button>
+      <span class="session-row-actions">
+        <button type="button" data-delete-session="${escapeHtml(session.id)}" title="Delete session">Delete</button>
+      </span>
+    `;
+    row.querySelector(".session-open-button").addEventListener("click", () => openSession(session.id));
+    const deleteButton = row.querySelector("[data-delete-session]");
+    deleteButton.addEventListener("click", (event) => deleteSession(event, session.id, session.title));
+    nodes.taskList.appendChild(row);
   });
 }
 
-async function openTask(taskId) {
+async function openTask(taskId, options = {}) {
   if (state.eventSource) {
     state.eventSource.close();
   }
@@ -140,7 +244,9 @@ async function openTask(taskId) {
 
   const task = await api(`/api/tasks/${taskId}`);
   setStatus(task.status);
-  renderChatMessages(task.messages || []);
+  if (!options.preserveChat) {
+    renderChatMessages(task.messages || []);
+  }
   renderTaskResult(task);
 
   const source = new EventSource(`/api/tasks/${taskId}/events`);
@@ -155,8 +261,11 @@ async function openTask(taskId) {
     const event = JSON.parse(message.data);
     setStatus(event.status);
     source.close();
-    loadTasks();
     await loadTaskResult(taskId);
+    if (state.activeSessionId) {
+      await refreshActiveSessionMemory();
+    }
+    await loadSessionsHeaderOnly();
     const task = await api(`/api/tasks/${taskId}`);
     appendCompletionSummary(task);
   });
@@ -166,6 +275,25 @@ async function loadTaskResult(taskId) {
   const task = await api(`/api/tasks/${taskId}`);
   setStatus(task.status);
   renderTaskResult(task);
+}
+
+function renderMissingTask(taskId, error, session = null) {
+  const taskSummary = (session?.task_summaries || []).find((task) => task.task_id === taskId);
+  setStatus("Missing");
+  renderJson({
+    status: "missing",
+    task_id: taskId,
+    note: "This session references a task that is not available in the current runtime.",
+    recovered_from_session_memory: taskSummary || null,
+    next_step: taskSummary ? "Re-run the research task to restore full events and evidence." : undefined,
+    error: error.message,
+  });
+  renderEmpty(
+    nodes.evidenceList,
+    taskSummary
+      ? "Full evidence is unavailable for this older task; the session memory still has its summary."
+      : "Task result is unavailable",
+  );
 }
 
 function renderTaskResult(task) {
@@ -185,6 +313,91 @@ function renderTaskResult(task) {
     `;
     nodes.evidenceList.appendChild(row);
   });
+}
+
+async function refreshActiveSessionMemory() {
+  if (!state.activeSessionId) {
+    renderEmpty(nodes.sessionMemory, "No session memory");
+    return;
+  }
+  const data = await api(`/api/sessions/${state.activeSessionId}`);
+  renderSessionMemory(data.session);
+}
+
+function renderSessionMemory(session) {
+  if (!session) {
+    renderEmpty(nodes.sessionMemory, "No session memory");
+    return;
+  }
+
+  const entities = session.working_entities || {};
+  const pending = session.pending_action;
+  const taskSummaries = session.task_summaries || [];
+
+  const entityRows = Object.entries(entities).map(
+    ([key, value]) => `
+      <div class="memory-row">
+        <span>${escapeHtml(key)}</span>
+        <strong>${escapeHtml(Array.isArray(value) ? value.join(", ") : value)}</strong>
+      </div>
+    `,
+  );
+
+  const pendingHtml = pending
+    ? `
+      <div class="memory-block">
+        <div class="memory-title">Pending</div>
+        <pre>${escapeHtml(JSON.stringify(pending, null, 2))}</pre>
+      </div>
+    `
+    : "";
+
+  const taskHtml = taskSummaries.length
+    ? `
+      <div class="memory-block">
+        <div class="memory-title">Recent Tasks</div>
+        ${taskSummaries
+          .slice()
+          .reverse()
+          .map(
+            (task) => `
+              <div class="memory-task">
+                <strong>${escapeHtml(task.ticker || task.skill_name || "task")}</strong>
+                <span>${escapeHtml([task.filing_type, `${task.evidence_count || 0} evidence`].filter(Boolean).join(" · "))}</span>
+                <small>${escapeHtml(task.summary || task.task_id || "")}</small>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
+  nodes.sessionMemory.innerHTML = `
+    <div class="memory-block">
+      <div class="memory-title">Session</div>
+      <div class="memory-row">
+        <span>ID</span>
+        <strong>${escapeHtml((session.id || "").slice(0, 12))}</strong>
+      </div>
+      <div class="memory-row">
+        <span>Messages</span>
+        <strong>${escapeHtml(session.message_count || 0)}</strong>
+      </div>
+      ${
+        session.active_task_id
+          ? `<div class="memory-row"><span>Active task</span><strong>${escapeHtml(session.active_task_id.slice(0, 8))}</strong></div>`
+          : ""
+      }
+    </div>
+    ${
+      entityRows.length
+        ? `<div class="memory-block"><div class="memory-title">Working Entities</div>${entityRows.join("")}</div>`
+        : `<div class="empty compact-empty">No working entities</div>`
+    }
+    ${pendingHtml}
+    ${taskHtml}
+  `;
 }
 
 function renderChatMessages(messages) {
@@ -345,7 +558,7 @@ async function createTask(event) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  await loadTasks();
+  await loadSessions();
   await openTask(task.id);
 }
 
@@ -356,7 +569,10 @@ async function sendChat(event) {
     return;
   }
 
-  renderChatMessages([{ role: "user", content: message }]);
+  if (nodes.chatLog.querySelector(".empty")) {
+    nodes.chatLog.innerHTML = "";
+  }
+  appendChatMessage({ role: "user", content: message });
   const pendingRow = appendChatMessage({ role: "assistant", content: "" });
   nodes.chatMessage.value = "";
   setStatus("Queued");
@@ -377,7 +593,7 @@ async function streamChatReply(message, row) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, session_id: state.activeSessionId }),
   });
   if (!response.ok || !response.body) {
     throw new Error(`${response.status} ${response.statusText}`);
@@ -399,7 +615,14 @@ async function streamChatReply(message, row) {
     for (const rawEvent of events) {
       const event = parseSSE(rawEvent);
       if (event.event === "chat-meta") {
+        if (event.data.session_id) {
+          state.activeSessionId = event.data.session_id;
+        }
+        if (event.data.session) {
+          renderSessionMemory(event.data.session);
+        }
         appendRouteCard(event.data, message);
+        loadSessionsHeaderOnly();
       }
       if (event.event === "chat-token") {
         content += event.data.content || "";
@@ -463,16 +686,22 @@ async function runResearch(message, button) {
   try {
     const payload = await api("/api/research/run", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, session_id: state.activeSessionId }),
     });
+    if (payload.session_id) {
+      state.activeSessionId = payload.session_id;
+    }
     if (!payload.task) {
       appendChatMessage(payload.assistant_message || { role: "assistant", content: "这个请求还不能执行。" });
       setStatus("Idle");
       return;
     }
     appendChatMessage(payload.assistant_message);
-    await loadTasks();
-    await openTask(payload.task.id);
+    if (payload.session) {
+      renderSessionMemory(payload.session);
+    }
+    await loadSessions();
+    await openTask(payload.task.id, { preserveChat: true });
   } catch (error) {
     button.disabled = false;
     button.textContent = "Run Research";
@@ -502,15 +731,18 @@ if (nodes.form) {
 }
 nodes.modelConfigForm.addEventListener("submit", saveModelConfig);
 nodes.chatForm.addEventListener("submit", sendChat);
-nodes.refreshTasks.addEventListener("click", loadTasks);
+nodes.refreshTasks.addEventListener("click", loadSessions);
+nodes.newSession.addEventListener("click", newSession);
+nodes.clearSessions.addEventListener("click", clearSessions);
 
 renderEmpty(nodes.chatLog, "Start with a research request");
 renderEmpty(nodes.taskList, "No sessions");
 renderEmpty(nodes.skillList, "No skills");
 renderEmpty(nodes.timeline, "No events");
 renderEmpty(nodes.evidenceList, "No evidence");
+renderEmpty(nodes.sessionMemory, "No session memory");
 renderJson({});
 
 loadSkills();
 loadModelConfig();
-loadTasks();
+loadSessions();

@@ -19,6 +19,26 @@ class FakeSECClient:
             index_url="https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/",
         )
 
+    def fetch_filing_document(self, filing):
+        return """
+        <html>
+          <body>
+            <h1>Item 1. Business</h1>
+            <p>Apple has a platform business with revenue from products, services,
+            customers, subscriptions, and commercial channels.</p>
+            <h1>Item 1A. Risk Factors</h1>
+            <p>Risks may adversely affect revenue, margins, cash flow, customers,
+            competition, cybersecurity, regulation, and operating results.</p>
+            <h1>Item 7. Management's Discussion and Analysis</h1>
+            <p>Management discusses revenue, operating income, net income, expenses,
+            liquidity, margin, and cash flow trends.</p>
+            <h1>Item 8. Financial Statements</h1>
+            <p>The financial statements include revenue, net income, cash, total assets,
+            balance sheet items, and stockholders' equity.</p>
+          </body>
+        </html>
+        """
+
 
 def test_orchestrator_runs_langgraph_skill_flow(tmp_path):
     registry = SkillRegistry([SecFilingAnalysisSkill(FakeSECClient())])

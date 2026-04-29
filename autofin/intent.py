@@ -43,10 +43,10 @@ class IntentParser(Protocol):
 
 
 class ChatResponder(Protocol):
-    def reply(self, message: str) -> tuple[str, JsonDict]:
+    def reply(self, message: str, context: str = "") -> tuple[str, JsonDict]:
         ...
 
-    def stream_reply(self, message: str) -> Iterable[str]:
+    def stream_reply(self, message: str, context: str = "") -> Iterable[str]:
         ...
 
 
@@ -132,12 +132,12 @@ class DeterministicIntentParser:
 
 @dataclass
 class DeterministicChatResponder:
-    def reply(self, message: str) -> tuple[str, JsonDict]:
+    def reply(self, message: str, context: str = "") -> tuple[str, JsonDict]:
         parser = DeterministicIntentParser()
         return parser._general_reply(message), {"responder": "deterministic"}
 
-    def stream_reply(self, message: str) -> Iterable[str]:
-        yield self.reply(message)[0]
+    def stream_reply(self, message: str, context: str = "") -> Iterable[str]:
+        yield self.reply(message, context)[0]
 
 
 @dataclass
@@ -145,10 +145,10 @@ class LangChainChatResponder:
     model_config_store: ModelConfigStore
     fallback: ChatResponder = field(default_factory=DeterministicChatResponder)
 
-    def reply(self, message: str) -> tuple[str, JsonDict]:
+    def reply(self, message: str, context: str = "") -> tuple[str, JsonDict]:
         config = self.model_config_store.get()
         if not self._is_configured(config):
-            reply, metadata = self.fallback.reply(message)
+            reply, metadata = self.fallback.reply(message, context)
             return reply, {**metadata, "responder": "deterministic"}
 
         try:
@@ -158,7 +158,8 @@ class LangChainChatResponder:
                     self._system_message(
                         "You are AutoFinResearchAgent, a local-first financial research assistant. "
                         "Answer normal conversation naturally and concisely. "
-                        "For requests that need financial research execution, tell the user to include a ticker and focus."
+                        "For requests that need financial research execution, tell the user to include a ticker and focus. "
+                        f"Use this session context when relevant:\n{context}"
                     ),
                     self._human_message(message),
                 ]
@@ -166,13 +167,13 @@ class LangChainChatResponder:
             content = getattr(response, "content", str(response))
             return str(content), {"responder": "langchain"}
         except Exception as exc:
-            reply, metadata = self.fallback.reply(message)
+            reply, metadata = self.fallback.reply(message, context)
             return reply, {**metadata, "responder": "deterministic_fallback", "responder_error": str(exc)}
 
-    def stream_reply(self, message: str) -> Iterable[str]:
+    def stream_reply(self, message: str, context: str = "") -> Iterable[str]:
         config = self.model_config_store.get()
         if not self._is_configured(config):
-            yield from self.fallback.stream_reply(message)
+            yield from self.fallback.stream_reply(message, context)
             return
 
         try:
@@ -182,7 +183,8 @@ class LangChainChatResponder:
                     self._system_message(
                         "You are AutoFinResearchAgent, a local-first financial research assistant. "
                         "Answer normal conversation naturally and concisely. "
-                        "For requests that need financial research execution, tell the user to include a ticker and focus."
+                        "For requests that need financial research execution, tell the user to include a ticker and focus. "
+                        f"Use this session context when relevant:\n{context}"
                     ),
                     self._human_message(message),
                 ]
@@ -191,7 +193,7 @@ class LangChainChatResponder:
                 if content:
                     yield str(content)
         except Exception:
-            yield from self.fallback.stream_reply(message)
+            yield from self.fallback.stream_reply(message, context)
 
     def _build_llm(self, config: ModelAPIConfig):
         try:

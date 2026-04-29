@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AutoFin Research Workbench</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260429-task-persist-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -20,7 +20,11 @@
         <section class="sidebar-section">
           <div class="section-heading">
             <h2>Sessions</h2>
-            <button id="refresh-tasks" type="button" title="Refresh sessions">Refresh</button>
+            <div class="section-actions">
+              <button id="new-session" type="button" title="New session">New</button>
+              <button id="clear-sessions" type="button" title="Delete all sessions">Clear</button>
+              <button id="refresh-tasks" type="button" title="Refresh sessions">Refresh</button>
+            </div>
           </div>
           <div id="task-list" class="task-list"></div>
         </section>
@@ -103,6 +107,13 @@
           <span id="active-task-id" class="muted">No active task</span>
         </section>
 
+        <section class="detail-panel memory-panel">
+          <div class="section-heading">
+            <h2>Memory</h2>
+          </div>
+          <div id="session-memory" class="memory-view"></div>
+        </section>
+
         <section class="detail-panel timeline-panel">
           <div class="section-heading">
             <h2>Activity</h2>
@@ -126,6 +137,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260429-task-persist-2"></script>
   </body>
 </html>

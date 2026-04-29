@@ -122,6 +122,18 @@ p {
   margin-bottom: 10px;
 }
 
+.section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-actions button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
 .section-heading h2 {
   font-size: 12px;
   letter-spacing: 0;
@@ -529,6 +541,75 @@ select:focus {
   overflow: auto;
 }
 
+.memory-panel {
+  max-height: 28vh;
+  overflow: auto;
+}
+
+.memory-view {
+  display: grid;
+  gap: 9px;
+}
+
+.memory-block {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.memory-title {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.memory-row span,
+.memory-task span,
+.memory-task small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memory-row strong,
+.memory-task strong {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.memory-task {
+  display: grid;
+  gap: 3px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.memory-task:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.memory-block pre {
+  margin: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .timeline {
   list-style: none;
   padding: 0;
@@ -584,6 +665,10 @@ select:focus {
   width: 100%;
   text-align: left;
   min-height: 62px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
 }
 
 .task-row strong,
@@ -592,6 +677,41 @@ select:focus {
   display: block;
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.task-row.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-row-main,
+.session-row-actions {
+  display: grid;
+  gap: 4px;
+}
+
+.session-open-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.session-open-button:hover {
+  border-color: transparent;
+}
+
+.session-open-button strong,
+.session-open-button span {
+  display: block;
+}
+
+.session-row-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--red);
+  font-size: 12px;
 }
 
 .task-row span,
@@ -631,6 +751,11 @@ select:focus {
   padding: 10px;
   border: 1px dashed var(--line);
   border-radius: 8px;
+}
+
+.compact-empty {
+  padding: 8px;
+  font-size: 12px;
 }
 
 .chat-log > .empty {

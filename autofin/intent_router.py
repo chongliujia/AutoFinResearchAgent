@@ -38,6 +38,29 @@ class RoutedIntent(BaseModel):
     needs_confirmation: bool = False
     unsupported_reason: str | None = None
 
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _coerce_confidence(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            labels = {"high": 0.9, "medium": 0.6, "low": 0.3}
+            if normalized in labels:
+                return labels[normalized]
+            if normalized.endswith("%"):
+                return float(normalized[:-1]) / 100
+        return value
+
+    @field_validator("ticker", "filing_type", "time_range", "output_format", "unsupported_reason", mode="before")
+    @classmethod
+    def _coerce_optional_string(cls, value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, list):
+            return str(value[0]) if value else None
+        if isinstance(value, dict) and not value:
+            return None
+        return value
+
     @field_validator("company_names", "focus", "missing_fields", mode="before")
     @classmethod
     def _coerce_string_list(cls, value):
@@ -73,13 +96,13 @@ class RoutedIntent(BaseModel):
 
 
 class IntentRouter(Protocol):
-    def route(self, message: str) -> JsonDict:
+    def route(self, message: str, context: str = "") -> JsonDict:
         ...
 
 
 @dataclass
 class DeterministicIntentRouter:
-    def route(self, message: str) -> JsonDict:
+    def route(self, message: str, context: str = "") -> JsonDict:
         text = message.strip()
         lowered = text.lower()
         tickers = self._extract_tickers(text)
@@ -251,7 +274,7 @@ class DeterministicIntentRouter:
 class LLMIntentRouter:
     model_config_store: ModelConfigStore
 
-    def route(self, message: str) -> JsonDict:
+    def route(self, message: str, context: str = "") -> JsonDict:
         config = self.model_config_store.get()
         if not self._is_configured(config):
             routed = RoutedIntent(
@@ -264,7 +287,7 @@ class LLMIntentRouter:
             return routed
 
         try:
-            routed = self._route_with_langchain(message, config).normalized()
+            routed = self._route_with_langchain(message, config, context).normalized()
             routed["router"] = "langchain"
             return routed
         except Exception as exc:
@@ -278,13 +301,10 @@ class LLMIntentRouter:
             routed["router_error"] = str(exc)
             return routed
 
-    def _route_with_langchain(self, message: str, config: ModelAPIConfig) -> RoutedIntent:
-        try:
-            return self._route_with_structured_output(message, config)
-        except Exception:
-            return self._route_with_json_prompt(message, config)
+    def _route_with_langchain(self, message: str, config: ModelAPIConfig, context: str = "") -> RoutedIntent:
+        return self._route_with_json_prompt(message, config, context)
 
-    def _route_with_structured_output(self, message: str, config: ModelAPIConfig) -> RoutedIntent:
+    def _route_with_structured_output(self, message: str, config: ModelAPIConfig, context: str = "") -> RoutedIntent:
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
             from langchain_openai import ChatOpenAI
@@ -293,12 +313,14 @@ class LLMIntentRouter:
 
         llm = ChatOpenAI(**self._model_kwargs(config))
         structured_llm = llm.with_structured_output(RoutedIntent)
-        result = structured_llm.invoke([SystemMessage(content=self._system_prompt()), HumanMessage(content=message)])
+        result = structured_llm.invoke(
+            [SystemMessage(content=self._system_prompt(context)), HumanMessage(content=message)]
+        )
         if isinstance(result, RoutedIntent):
             return result
         return RoutedIntent.model_validate(result)
 
-    def _route_with_json_prompt(self, message: str, config: ModelAPIConfig) -> RoutedIntent:
+    def _route_with_json_prompt(self, message: str, config: ModelAPIConfig, context: str = "") -> RoutedIntent:
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
             from langchain_openai import ChatOpenAI
@@ -310,10 +332,12 @@ class LLMIntentRouter:
             [
                 SystemMessage(
                     content=(
-                        f"{self._system_prompt()} Return only valid JSON. "
+                        f"{self._system_prompt(context)} Return only valid JSON. "
                         "Schema fields: intent, confidence, assistant_reply, ticker, company_names, "
                         "filing_type, focus, time_range, output_format, missing_fields, "
-                        "needs_confirmation, unsupported_reason."
+                        "needs_confirmation, unsupported_reason. "
+                        "confidence must be a number between 0 and 1, not a word. "
+                        "Use null for absent scalar fields. Use [] for absent list fields."
                     )
                 ),
                 HumanMessage(content=message),
@@ -324,26 +348,37 @@ class LLMIntentRouter:
             content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE | re.DOTALL)
         return RoutedIntent.model_validate(json.loads(content))
 
-    def _system_prompt(self) -> str:
-        return (
+    def _system_prompt(self, context: str = "") -> str:
+        prompt = (
             "You are an intent router for a local financial research agent. "
             "Classify the user message into exactly one intent from: "
             f"{', '.join(sorted(SUPPORTED_INTENTS))}. "
             "Extract fields only; do not run tools and do not fabricate data. "
             "Use general_chat for ordinary conversation. "
+            "If the user asks to analyze a public stock or company without naming a data source, "
+            "classify it as research_sec_filing and default filing_type to 10-K because that is the currently available executable research workflow. "
             "Use research_sec_filing only for SEC filing, 10-K, 10-Q, annual report, quarterly report, "
-            "risk factor, cash flow, revenue, MD&A, or filing analysis requests. "
+            "risk factor, cash flow, revenue, MD&A, filing analysis requests, or general public-company stock analysis requests. "
             "Set missing_fields when required fields are absent. "
-            "Set needs_confirmation true for executable research workflows."
+            "Set needs_confirmation true for executable research workflows. "
+            "Return confidence as a numeric value from 0 to 1. "
+            "Return ticker as a string or null, never as a list."
         )
+        if context:
+            prompt += (
+                " Use the session context to resolve follow-up phrases like "
+                "'继续刚才那个', 'that company', 'same filing', or '整理成 memo'. "
+                f"Session context:\n{context}"
+            )
+        return prompt
 
     def _model_kwargs(self, config: ModelAPIConfig, temperature: float | None = None) -> JsonDict:
         kwargs: JsonDict = {
             "model": config.model,
             "api_key": config.api_key,
             "temperature": config.temperature if temperature is None else temperature,
-            "request_timeout": 8,
-            "max_retries": 0,
+            "request_timeout": 60,
+            "max_retries": 1,
         }
         if config.base_url:
             kwargs["base_url"] = config.base_url

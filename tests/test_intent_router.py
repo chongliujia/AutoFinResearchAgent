@@ -4,8 +4,16 @@ from autofin.policy import PolicyEngine
 
 
 class FailingLLMIntentRouter(LLMIntentRouter):
-    def _route_with_langchain(self, message, config):
+    def _route_with_langchain(self, message, config, context=""):
         raise RuntimeError("model unavailable")
+
+
+class JsonOnlyFailingRouter(LLMIntentRouter):
+    def _route_with_json_prompt(self, message, config, context=""):
+        raise RuntimeError("json prompt failed")
+
+    def _route_with_structured_output(self, message, config, context=""):
+        raise AssertionError("structured output should not be called")
 
 
 def test_routed_intent_normalizes_missing_ticker_for_sec_research():
@@ -26,6 +34,19 @@ def test_routed_intent_accepts_provider_string_lists():
 
     assert routed["ticker"] == "AAPL"
     assert routed["focus"] == ["risk factors", "cash flow"]
+
+
+def test_routed_intent_accepts_provider_scalar_shape_drift():
+    routed = RoutedIntent(
+        intent="general_chat",
+        confidence="high",
+        ticker=[],
+        filing_type=[],
+    ).normalized()
+
+    assert routed["confidence"] == 0.9
+    assert routed["ticker"] is None
+    assert routed["filing_type"] is None
 
 
 def test_deterministic_router_classifies_sec_research():
@@ -77,3 +98,13 @@ def test_llm_router_requires_model_config_instead_of_deterministic_fallback():
 
     assert routed["intent"] == "configure_settings"
     assert routed["router"] == "unconfigured"
+
+
+def test_llm_router_does_not_try_structured_output_fallback():
+    router = JsonOnlyFailingRouter(ModelConfigStore(ModelAPIConfig(model="test-model", api_key="sk-test")))
+
+    routed = router.route("帮我分析PLTR这个股票")
+
+    assert routed["intent"] == "intent_routing_failed"
+    assert routed["router"] == "langchain_error"
+    assert "json prompt failed" in routed["router_error"]

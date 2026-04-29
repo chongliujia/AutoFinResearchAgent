@@ -72,6 +72,39 @@ autofin/policy.py
 
 后续可以把 skills 交给 LangChain agent 或 LangGraph node 调用。
 
+## Session, Memory, and Agent Runtime
+
+当前 chat flow 已经从单轮消息升级为 session-aware runtime：
+
+```text
+Web UI session_id
+  |
+  v
+AgentRuntime
+  |
+  +-- SessionStore / SessionMemory
+  +-- LLMIntentRouter with session context
+  +-- PolicyEngine
+  +-- ChatResponder
+  +-- TaskStore / LangGraph research task
+```
+
+核心文件：
+
+```text
+autofin/session.py
+autofin/memory.py
+autofin/agent_runtime.py
+```
+
+`SessionStore` 维护 conversation session、message transcript 和 active task。`SessionMemory` 维护短期上下文，包括最近消息摘要、working entities、pending action 和 active task id。`AgentRuntime` 把 session context 注入 LLM intent routing 和普通聊天回复。
+
+更完整的设计见：
+
+```text
+docs/session-memory-runtime.md
+```
+
 ## Skill 设计
 
 每个 skill 是一个可声明、可测试、可复用的能力单元。
@@ -89,13 +122,21 @@ autofin/policy.py
 autofin/skills/sec_filing.py
 ```
 
-当前 `sec_filing_analysis` 已经接入 SEC metadata：
+当前 `sec_filing_analysis` 已经接入 SEC metadata、filing HTML 下载和抽取式正文分析：
 
 ```text
 autofin/data/sec_client.py
+autofin/skills/sec_filing.py
 ```
 
-第一版会通过 SEC company ticker map 和 submissions JSON 获取最近 10-K / 10-Q 的 filing metadata、accession number、primary document 和 SEC source URL。正文下载、section extraction 和总结会在后续迭代中加入。
+当前流程会通过 SEC company ticker map 和 submissions JSON 获取最近 10-K / 10-Q 的 filing metadata、accession number、primary document 和 SEC source URL，然后下载 filing document HTML，抽取正文文本，并为这些区域生成 evidence-backed highlights：
+
+- Business
+- Risk Factors
+- MD&A
+- Financial Statements
+
+这个版本是确定性的 extractive analysis：它优先输出可追溯 excerpt evidence，不把结果包装成投资建议。下一步适合在这些 evidence 之上加入 LLM memo synthesis 和结构化财务表解析。
 
 ## Sandbox 设计
 

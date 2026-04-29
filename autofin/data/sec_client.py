@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 JsonDict = Dict[str, Any]
 JsonFetcher = Callable[[str], JsonDict]
+TextFetcher = Callable[[str], str]
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class SECClient:
         self,
         user_agent: Optional[str] = None,
         fetch_json: Optional[JsonFetcher] = None,
+        fetch_text: Optional[TextFetcher] = None,
     ) -> None:
         self.user_agent = (
             user_agent
@@ -44,6 +46,7 @@ class SECClient:
             or "AutoFinResearchAgent contact@example.com"
         )
         self._fetch_json = fetch_json or self._default_fetch_json
+        self._fetch_text = fetch_text or self._default_fetch_text
         self._ticker_map: Optional[dict[str, JsonDict]] = None
 
     def latest_filing(self, ticker: str, filing_type: str = "10-K") -> SECFiling:
@@ -86,6 +89,9 @@ class SECClient:
         except KeyError as exc:
             raise LookupError(f"SEC ticker not found: {ticker}") from exc
 
+    def fetch_filing_document(self, filing: SECFiling) -> str:
+        return self._fetch_text(filing.document_url)
+
     def _get_ticker_map(self) -> dict[str, JsonDict]:
         if self._ticker_map is None:
             raw = self._fetch_json(self.ticker_map_url)
@@ -123,6 +129,24 @@ class SECClient:
             raise RuntimeError(f"SEC request failed with HTTP {exc.code}: {url}") from exc
         except URLError as exc:
             raise RuntimeError(f"SEC request failed: {url}") from exc
+
+    def _default_fetch_text(self, url: str) -> str:
+        request = Request(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,text/plain",
+                "User-Agent": self.user_agent,
+            },
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                raw = response.read()
+                charset = response.headers.get_content_charset() or "utf-8"
+                return raw.decode(charset, errors="replace")
+        except HTTPError as exc:
+            raise RuntimeError(f"SEC document request failed with HTTP {exc.code}: {url}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"SEC document request failed: {url}") from exc
 
     def _format_cik(self, cik: Any) -> str:
         return str(int(cik)).zfill(10)

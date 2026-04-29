@@ -13,8 +13,8 @@ The repository now contains a runnable Python MVP:
 - Permission-aware skill registry
 - In-process sandbox boundary for the first execution model
 - Trace logging for auditability
-- `sec_filing_analysis` skill backed by SEC filing metadata
-- SEC submissions API client for filing metadata and source links
+- `sec_filing_analysis` skill backed by SEC filing metadata, document download, and extractive filing analysis
+- SEC submissions API client for filing metadata, source links, and filing document HTML
 - FastAPI service layer
 - Chat-first local Web UI inspired by agent apps such as Codex
 - General conversation support without forcing every message into a task
@@ -24,6 +24,10 @@ The repository now contains a runnable Python MVP:
 - LangChain structured-output router for chat intent, with visible LLM failure states
 - Routed intent + deterministic policy layer for explicit research execution
 - Intent chip and `Run Research` action card in the chat UI
+- Conversation sessions with local transcript persistence and short-term memory
+- Agent runtime layer that routes messages with session context
+- Research task result summaries written back into session memory
+- Research task records and results persisted locally so active task views survive service restarts
 - Tests for runtime, permissions, skills, orchestrator, and Web API
 
 ## Architecture
@@ -82,15 +86,18 @@ autofin/
     executor.py           # execution boundary
   skills/
     base.py               # Skill abstraction + LangChain tool adapter
-    sec_filing.py         # SEC filing metadata skill
+    sec_filing.py         # SEC filing metadata + extractive analysis skill
   data/
     sec_client.py         # SEC company ticker and submissions client
   intent.py               # chat intent parsing
   intent_router.py        # routed intent taxonomy and LLM router
   policy.py               # deterministic execution policy and policy log
+  session.py              # conversation session and transcript store
+  memory.py               # session memory and prompt context
+  agent_runtime.py        # session-aware chat/runtime coordination
   web/
     app.py                # FastAPI routes
-    task_store.py         # in-memory task/session store
+    task_store.py         # local task/session coordination and task persistence
     static/               # local Web UI
   config.py               # model API configuration
   cli.py                  # CLI entrypoint
@@ -139,6 +146,8 @@ UI-saved model settings persist locally:
 ```text
 .autofin/config.json    # provider, model, base_url, temperature
 .autofin/secrets.json   # api_key
+.autofin/sessions/      # chat sessions and transcripts
+.autofin/tasks/         # research task records, events, and results
 ```
 
 The `.autofin/` directory is gitignored.
@@ -224,6 +233,8 @@ tool_call_completed: sec_filing_analysis
   evidence
 ```
 
+The first automated filing analysis pass downloads the SEC filing document and extracts evidence-backed highlights for business, risk factors, MD&A, and financial statements. The output is intentionally extractive: it cites filing excerpts and avoids presenting the result as investment advice. Full numeric statement parsing and LLM-written research memos are planned as the next layer.
+
 ## API
 
 Health:
@@ -254,6 +265,16 @@ GET /api/tasks/{task_id}
 GET /api/tasks/{task_id}/events
 ```
 
+Sessions:
+
+```http
+GET /api/sessions
+POST /api/sessions
+GET /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
+DELETE /api/sessions
+```
+
 Chat:
 
 ```http
@@ -275,13 +296,14 @@ curl -sS http://127.0.0.1:8098/api/chat \
 - [Architecture](docs/architecture.md)
 - [Web UI Development Notes](docs/web-ui.md)
 - [Intent Routing Design](docs/intent-routing.md)
+- [Session, Memory, and Agent Runtime](docs/session-memory-runtime.md)
 
 ## Next Steps
 
-1. Add SEC filing document download and section extraction.
-2. Add SQLite-backed task/session persistence.
-3. Add LangGraph checkpointing and task resume.
-4. Use the configured model for filing summarization and memo generation.
+1. Add LLM-written filing memo generation grounded in extracted evidence.
+2. Add numeric financial statement parsing and period-over-period comparisons.
+3. Add SQLite-backed task/session persistence.
+4. Add LangGraph checkpointing and task resume.
 5. Add a permission approval panel for network/filesystem access.
 6. Add generated report artifacts and Markdown/HTML memo previews.
 7. Migrate the static UI to React once the API shape stabilizes.
