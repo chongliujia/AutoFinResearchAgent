@@ -4,6 +4,12 @@ AutoFinResearchAgent is a local-first, skill-based runtime for auditable financi
 
 The project is being built as a financial research agent workspace: users can chat normally, describe research goals in natural language, and let the runtime turn executable research requests into structured tasks. LangGraph executes the workflow, skills do the domain work, and the UI exposes tool calls, evidence, traces, and results.
 
+## Demo
+
+![AutoFinResearchAgent Web UI demo](docs/assets/web-demo.png)
+
+The demo shows the chat-first research workflow, active task progress, evidence-cited answers, and the right-side Report/Evidence inspector. The Model API configuration panel is intentionally omitted from the screenshot.
+
 ## Current MVP
 
 The repository now contains a runnable Python MVP:
