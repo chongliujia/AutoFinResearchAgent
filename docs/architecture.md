@@ -136,7 +136,7 @@ autofin/skills/sec_filing.py
 - MD&A
 - Financial Statements
 
-这个版本是确定性的 extractive analysis：它优先输出可追溯 excerpt evidence，不把结果包装成投资建议。下一步适合在这些 evidence 之上加入 LLM memo synthesis 和结构化财务表解析。
+分析结果同时包含 `analysis.report`，用于 UI 右侧的 Report panel。这个版本是确定性的 extractive analysis：它优先输出可追溯 excerpt evidence，不把结果包装成投资建议。下一步适合在这些 evidence 之上加入 LLM memo synthesis 和结构化财务表解析。
 
 ## Sandbox 设计
 

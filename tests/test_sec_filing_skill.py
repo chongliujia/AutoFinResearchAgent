@@ -49,6 +49,8 @@ def test_sec_filing_skill_returns_structured_mock_result():
     assert result.data["filing_type"] == "10-K"
     assert result.data["status"] == "analysis_completed"
     assert "analysis" in result.data
+    assert result.data["analysis"]["report"]["title"] == "SEC Filing Extractive Research Memo"
+    assert result.data["analysis"]["report"]["key_observations"]
     assert result.data["analysis"]["sections"]["risk_factors"]["highlights"]
     assert any(item["kind"] == "filing_excerpt" for item in result.evidence)
     assert result.evidence

@@ -64,6 +64,13 @@ SECTION_KEYWORDS = {
     ],
 }
 
+SECTION_LABELS = {
+    "business": "Business",
+    "risk_factors": "Risk Factors",
+    "mda": "MD&A",
+    "financial_statements": "Financial Statements",
+}
+
 
 class FilingHTMLTextParser(HTMLParser):
     def __init__(self) -> None:
@@ -129,6 +136,8 @@ class FilingDocumentAnalyzer:
                 "highlights": [self._sentence_summary(item.text) for item in selected],
             }
 
+        report = self._build_report(section_summaries)
+
         return {
             "status": "analysis_completed",
             "text_stats": {
@@ -137,6 +146,7 @@ class FilingDocumentAnalyzer:
                 "sections_found": sorted([key for key, value in sections.items() if value]),
             },
             "sections": section_summaries,
+            "report": report,
             "summary": self._overall_summary(section_summaries),
             "excerpts": excerpts[:10],
         }
@@ -199,6 +209,38 @@ class FilingDocumentAnalyzer:
         }
         joined = ", ".join(labels.get(name, name) for name in found)
         return f"Analyzed filing text and extracted evidence-backed highlights for {joined}."
+
+    def _build_report(self, sections: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        observations = []
+        for section, data in sections.items():
+            highlights = data.get("highlights") or []
+            if not highlights:
+                continue
+            observations.append(
+                {
+                    "section": section,
+                    "title": SECTION_LABELS.get(section, section.replace("_", " ").title()),
+                    "summary": highlights[0],
+                    "supporting_points": highlights[1:],
+                    "found_section": bool(data.get("found_section")),
+                }
+            )
+
+        risk_watchlist = []
+        for item in sections.get("risk_factors", {}).get("highlights") or []:
+            risk_watchlist.append(item)
+
+        return {
+            "title": "SEC Filing Extractive Research Memo",
+            "stance": "evidence_first_extract_only",
+            "executive_summary": self._overall_summary(sections),
+            "key_observations": observations,
+            "risk_watchlist": risk_watchlist[:3],
+            "limitations": [
+                "This memo is generated from extracted filing text and should be reviewed against the source filing.",
+                "It does not yet perform full numeric table parsing, valuation, or investment recommendation.",
+            ],
+        }
 
 
 class SecFilingAnalysisSkill(Skill):

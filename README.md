@@ -28,6 +28,7 @@ The repository now contains a runnable Python MVP:
 - Agent runtime layer that routes messages with session context
 - Research task result summaries written back into session memory
 - Research task records and results persisted locally so active task views survive service restarts
+- Evidence-backed research memo structure and Report panel for SEC filing results
 - Tests for runtime, permissions, skills, orchestrator, and Web API
 
 ## Architecture
@@ -233,7 +234,7 @@ tool_call_completed: sec_filing_analysis
   evidence
 ```
 
-The first automated filing analysis pass downloads the SEC filing document and extracts evidence-backed highlights for business, risk factors, MD&A, and financial statements. The output is intentionally extractive: it cites filing excerpts and avoids presenting the result as investment advice. Full numeric statement parsing and LLM-written research memos are planned as the next layer.
+The first automated filing analysis pass downloads the SEC filing document and extracts evidence-backed highlights for business, risk factors, MD&A, and financial statements. It also builds a structured memo under `analysis.report`, rendered in the right-side Report panel. The output is intentionally extractive: it cites filing excerpts and avoids presenting the result as investment advice. Full numeric statement parsing and LLM-written research memos are planned as the next layer.
 
 ## API
 

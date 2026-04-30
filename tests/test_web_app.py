@@ -103,6 +103,7 @@ def test_web_app_creates_research_task():
 
     assert task["status"] == "completed"
     assert task["result"]["result"]["data"]["ticker"] == "AAPL"
+    assert task["result"]["result"]["data"]["analysis"]["report"]["key_observations"]
     assert task["event_count"] >= 5
 
 

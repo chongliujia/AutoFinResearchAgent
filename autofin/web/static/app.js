@@ -17,6 +17,7 @@ const nodes = {
   runtimeStatus: document.querySelector("#runtime-status"),
   activeTaskId: document.querySelector("#active-task-id"),
   sessionMemory: document.querySelector("#session-memory"),
+  reportView: document.querySelector("#report-view"),
   timeline: document.querySelector("#timeline"),
   taskList: document.querySelector("#task-list"),
   skillList: document.querySelector("#skill-list"),
@@ -151,6 +152,7 @@ async function newSession() {
   nodes.activeTaskId.textContent = "No active task";
   nodes.timeline.innerHTML = "";
   renderJson({});
+  renderReport(null);
   renderEmpty(nodes.evidenceList, "No evidence");
   renderSessionMemory(data.session);
   renderChatMessages([]);
@@ -182,6 +184,7 @@ async function clearSessions() {
   nodes.activeTaskId.textContent = "No active task";
   nodes.timeline.innerHTML = "";
   renderJson({});
+  renderReport(null);
   renderEmpty(nodes.evidenceList, "No evidence");
   await loadSessions();
 }
@@ -202,6 +205,7 @@ async function openSession(sessionId) {
     state.activeTaskId = null;
     nodes.activeTaskId.textContent = "No active task";
     renderJson({});
+    renderReport(null);
     renderEmpty(nodes.evidenceList, "No evidence");
   }
   renderSessionMemory(data.session);
@@ -288,6 +292,7 @@ function renderMissingTask(taskId, error, session = null) {
     next_step: taskSummary ? "Re-run the research task to restore full events and evidence." : undefined,
     error: error.message,
   });
+  renderReport(null);
   renderEmpty(
     nodes.evidenceList,
     taskSummary
@@ -298,6 +303,7 @@ function renderMissingTask(taskId, error, session = null) {
 
 function renderTaskResult(task) {
   renderJson(task.result || { status: task.status, error: task.error });
+  renderReport(task);
   const evidence = task.result?.result?.evidence || [];
   nodes.evidenceList.innerHTML = "";
   if (!evidence.length) {
@@ -307,12 +313,89 @@ function renderTaskResult(task) {
   evidence.forEach((item) => {
     const row = document.createElement("div");
     row.className = "evidence-row";
+    const label = [item.kind || "evidence", item.section].filter(Boolean).join(" · ");
     row.innerHTML = `
-      <strong>${escapeHtml(item.source || item.kind || "evidence")}</strong>
-      <span>${escapeHtml(item.note || JSON.stringify(item))}</span>
+      <strong>${escapeHtml(label || item.source || "evidence")}</strong>
+      <span>${escapeHtml(item.note || item.url || JSON.stringify(item))}</span>
+      ${item.excerpt ? `<details><summary>Excerpt</summary><p>${escapeHtml(item.excerpt)}</p></details>` : ""}
+      ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Source</a>` : ""}
     `;
     nodes.evidenceList.appendChild(row);
   });
+}
+
+function renderReport(task) {
+  const data = task?.result?.result?.data;
+  const report = data?.analysis?.report;
+  if (!report) {
+    renderEmpty(nodes.reportView, "No report");
+    return;
+  }
+
+  const meta = [
+    data.company_name || data.ticker,
+    data.filing_type,
+    data.filing_date ? `Filed ${data.filing_date}` : "",
+  ].filter(Boolean);
+  const observations = report.key_observations || [];
+  const riskWatchlist = report.risk_watchlist || [];
+  const limitations = report.limitations || [];
+
+  nodes.reportView.innerHTML = `
+    <div class="report-header">
+      <strong>${escapeHtml(report.title || "Research Memo")}</strong>
+      <span>${escapeHtml(meta.join(" · "))}</span>
+    </div>
+    <div class="report-section">
+      <div class="report-title">Executive Summary</div>
+      <p>${escapeHtml(report.executive_summary || data.summary || "")}</p>
+    </div>
+    ${
+      observations.length
+        ? `
+          <div class="report-section">
+            <div class="report-title">Key Observations</div>
+            ${observations.map((item) => renderObservation(item)).join("")}
+          </div>
+        `
+        : ""
+    }
+    ${
+      riskWatchlist.length
+        ? `
+          <div class="report-section">
+            <div class="report-title">Risk Watchlist</div>
+            <ul>${riskWatchlist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        `
+        : ""
+    }
+    ${
+      limitations.length
+        ? `
+          <div class="report-section">
+            <div class="report-title">Limitations</div>
+            <ul>${limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        `
+        : ""
+    }
+  `;
+}
+
+function renderObservation(item) {
+  const supportingPoints = item.supporting_points || [];
+  return `
+    <div class="report-observation">
+      <strong>${escapeHtml(item.title || item.section || "Observation")}</strong>
+      <p>${escapeHtml(item.summary || "")}</p>
+      ${
+        supportingPoints.length
+          ? `<ul>${supportingPoints.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul>`
+          : ""
+      }
+    </div>
+  `;
 }
 
 async function refreshActiveSessionMemory() {
@@ -741,6 +824,7 @@ renderEmpty(nodes.skillList, "No skills");
 renderEmpty(nodes.timeline, "No events");
 renderEmpty(nodes.evidenceList, "No evidence");
 renderEmpty(nodes.sessionMemory, "No session memory");
+renderEmpty(nodes.reportView, "No report");
 renderJson({});
 
 loadSkills();
