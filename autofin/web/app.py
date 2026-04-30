@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from autofin.config import ModelConfigStore
 from autofin.intent import LangChainChatResponder, LangChainIntentParser
 from autofin.intent_router import LLMIntentRouter
+from autofin.skills import SecFilingAnalysisSkill
+from autofin.skills.sec_filing import LangChainEvidenceMemoSynthesizer
 from autofin.web.task_store import TaskStore
 
 
@@ -46,6 +48,11 @@ store = TaskStore(
     intent_parser=LangChainIntentParser(model_config_store),
     intent_router=LLMIntentRouter(model_config_store),
     chat_responder=LangChainChatResponder(model_config_store),
+    skills=[
+        SecFilingAnalysisSkill(
+            memo_synthesizer=LangChainEvidenceMemoSynthesizer(model_config_store),
+        )
+    ],
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -170,6 +177,32 @@ def get_task(task_id: str):
         return store.get_task(task_id).public_view()
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/tasks/{task_id}/artifacts/{artifact_index}")
+def get_task_artifact(task_id: str, artifact_index: int):
+    try:
+        task = store.get_task(task_id).public_view()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    artifacts = task.get("result", {}).get("result", {}).get("data", {}).get("analysis", {}).get("artifacts", [])
+    if artifact_index < 0 or artifact_index >= len(artifacts):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    artifact = artifacts[artifact_index]
+    path = artifact.get("path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Artifact has no readable path")
+
+    artifact_path = Path(path)
+    if not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+
+    return {
+        "artifact": artifact,
+        "content": artifact_path.read_text(encoding="utf-8"),
+    }
 
 
 @app.get("/api/tasks/{task_id}/events")

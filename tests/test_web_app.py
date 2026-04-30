@@ -6,6 +6,7 @@ import autofin.web.app as web_app
 from autofin.data.sec_client import SECFiling
 from autofin.session import SessionStore
 from autofin.skills import SecFilingAnalysisSkill
+from autofin.skills.sec_filing import MarkdownMemoArtifactWriter
 from autofin.web.task_store import TaskStore
 
 
@@ -47,7 +48,12 @@ class FakeSECClient:
 
 
 web_app.store = TaskStore(
-    skills=[SecFilingAnalysisSkill(FakeSECClient())],
+    skills=[
+        SecFilingAnalysisSkill(
+            FakeSECClient(),
+            artifact_writer=MarkdownMemoArtifactWriter("/tmp/autofin-web-test-artifacts"),
+        )
+    ],
     session_store=SessionStore(persist=False),
     persist_tasks=False,
 )
@@ -104,7 +110,36 @@ def test_web_app_creates_research_task():
     assert task["status"] == "completed"
     assert task["result"]["result"]["data"]["ticker"] == "AAPL"
     assert task["result"]["result"]["data"]["analysis"]["report"]["key_observations"]
+    assert task["result"]["result"]["data"]["analysis"]["report"]["memo_style"] == "extractive"
+    assert task["result"]["result"]["data"]["analysis"]["artifacts"][0]["kind"] == "markdown_memo"
     assert task["event_count"] >= 5
+    assert task["progress"]["stage"] == "completed"
+    assert task["progress"]["ticker"] == "AAPL"
+    assert task["progress"]["evidence_count"] >= 1
+    assert any(event["event_type"] == "task_stage" for event in task["recent_events"])
+
+
+def test_web_app_reads_task_artifact():
+    response = client.post(
+        "/api/tasks",
+        json={"ticker": "AAPL", "filing_type": "10-K", "objective": "Analyze SEC filing"},
+    )
+    task_id = response.json()["id"]
+
+    task = None
+    for _ in range(10):
+        task = client.get(f"/api/tasks/{task_id}").json()
+        if task["status"] == "completed":
+            break
+        sleep(0.05)
+
+    artifact = client.get(f"/api/tasks/{task_id}/artifacts/0")
+
+    assert task["status"] == "completed"
+    assert artifact.status_code == 200
+    assert artifact.json()["artifact"]["kind"] == "markdown_memo"
+    assert "# AAPL 10-K Evidence-Grounded Memo" in artifact.json()["content"]
+    assert "- Company: Apple Inc." in artifact.json()["content"]
 
 
 def test_web_app_creates_task_from_chat_message():
@@ -135,6 +170,35 @@ def test_web_app_creates_task_from_chat_message():
     updated_session = client.get(f"/api/sessions/{session['id']}").json()["session"]
     assert updated_session["task_summaries"][0]["task_id"] == task_id
     assert updated_session["task_summaries"][0]["ticker"] == "MSFT"
+
+
+def test_web_app_answers_followup_from_active_research_context():
+    session = client.post("/api/sessions").json()["session"]
+    response = client.post(
+        "/api/research/run",
+        json={"message": "帮我分析 AAPL 最近的 10-K，重点看风险因素", "session_id": session["id"]},
+    )
+    task_id = response.json()["task"]["id"]
+
+    for _ in range(10):
+        task = client.get(f"/api/tasks/{task_id}").json()
+        if task["status"] == "completed":
+            break
+        sleep(0.05)
+
+    with client.stream(
+        "POST",
+        "/api/chat/stream",
+        json={"message": "这个公司的主要风险是什么？", "session_id": session["id"]},
+    ) as followup:
+        body = followup.read().decode("utf-8")
+
+    assert followup.status_code == 200
+    assert '"intent": "research_qa"' in body
+    assert "[E" in body
+    stored = client.get(f"/api/sessions/{session['id']}").json()["session"]
+    assert stored["messages"][-1]["role"] == "assistant"
+    assert "[E" in stored["messages"][-1]["content"]
 
 
 def test_web_app_chat_routes_general_conversation():
@@ -287,7 +351,12 @@ def test_task_store_accepts_injected_chat_responder():
 def test_task_store_persists_completed_task_results(tmp_path):
     task_root = tmp_path / "tasks"
     store = TaskStore(
-        skills=[SecFilingAnalysisSkill(FakeSECClient())],
+        skills=[
+            SecFilingAnalysisSkill(
+                FakeSECClient(),
+                artifact_writer=MarkdownMemoArtifactWriter(tmp_path / "artifacts"),
+            )
+        ],
         session_store=SessionStore(persist=False),
         task_root=task_root,
     )
@@ -300,7 +369,12 @@ def test_task_store_persists_completed_task_results(tmp_path):
     store.run_task(record.id)
 
     reloaded = TaskStore(
-        skills=[SecFilingAnalysisSkill(FakeSECClient())],
+        skills=[
+            SecFilingAnalysisSkill(
+                FakeSECClient(),
+                artifact_writer=MarkdownMemoArtifactWriter(tmp_path / "artifacts"),
+            )
+        ],
         session_store=SessionStore(persist=False),
         task_root=task_root,
     )

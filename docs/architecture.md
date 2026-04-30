@@ -136,7 +136,7 @@ autofin/skills/sec_filing.py
 - MD&A
 - Financial Statements
 
-分析结果同时包含 `analysis.report`，用于 UI 右侧的 Report panel。这个版本是确定性的 extractive analysis：它优先输出可追溯 excerpt evidence，不把结果包装成投资建议。下一步适合在这些 evidence 之上加入 LLM memo synthesis 和结构化财务表解析。
+分析结果同时包含 `analysis.report`，用于 UI 右侧的 Report panel。默认 skill 可以生成确定性的 extractive memo；Web runtime 会注入 `LangChainEvidenceMemoSynthesizer`，在 Model API 已配置时基于 evidence ids 生成 LLM evidence-grounded memo。模型不可用或输出无效时会降级为 extractive memo，不让研究任务失败。系统会校验 memo citation 是否指向真实 evidence id，并把 Markdown memo artifact 写入 `.autofin/artifacts/`。UI 已支持 Report / Evidence citation 联动、Markdown artifact 预览、任务阶段可视化，以及基于 active task 的 evidence-grounded follow-up QA。下一步适合加入结构化财务表解析和多任务比较。
 
 ## Sandbox 设计
 
@@ -227,11 +227,11 @@ Chat message
   ↓
 intent routing
   ↓
-conversation reply or structured research task
+conversation reply, research follow-up QA, or structured research task
   ↓
 LangGraph execution
   ↓
-timeline + evidence + artifact
+task progress + report + evidence + artifact
 ```
 
 这样做的原因是：用户用自然语言表达目标，但系统需要保留权限检查、trace、evidence 和可恢复执行。
@@ -252,7 +252,7 @@ docs/intent-routing.md
 
 1. SEC filing skill 接入真实 SEC API
 2. TaskStore 从内存迁移到 SQLite
-3. Web UI 增加 artifact 预览
+3. SEC companyfacts / XBRL 财务指标解析
 4. LangGraph 加 checkpoint 和 resume
 5. SandboxExecutor 改为 subprocess/container
 6. 前端迁移到 React

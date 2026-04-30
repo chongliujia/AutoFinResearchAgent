@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AutoFin Research Workbench</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260430-report-view" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260501-research-qa" />
   </head>
   <body>
     <main class="app-shell">
@@ -105,45 +105,54 @@
             <h2>Current Task</h2>
           </div>
           <span id="active-task-id" class="muted">No active task</span>
+          <div id="task-progress" class="task-progress"></div>
         </section>
 
-        <section class="detail-panel memory-panel">
-          <div class="section-heading">
-            <h2>Memory</h2>
-          </div>
-          <div id="session-memory" class="memory-view"></div>
-        </section>
+        <div class="inspector-tabs" role="tablist" aria-label="Inspector views">
+          <button type="button" class="active" data-inspector-tab="report" role="tab" aria-selected="true">Report</button>
+          <button type="button" data-inspector-tab="evidence" role="tab" aria-selected="false">Evidence</button>
+          <button type="button" data-inspector-tab="activity" role="tab" aria-selected="false">Activity</button>
+          <button type="button" data-inspector-tab="memory" role="tab" aria-selected="false">Memory</button>
+          <button type="button" data-inspector-tab="json" role="tab" aria-selected="false">JSON</button>
+        </div>
 
-        <section class="detail-panel timeline-panel">
-          <div class="section-heading">
-            <h2>Activity</h2>
-          </div>
-          <ol id="timeline" class="timeline"></ol>
-        </section>
-
-        <section class="detail-panel report-panel">
+        <section class="detail-panel inspector-panel report-panel active" data-inspector-panel="report">
           <div class="section-heading">
             <h2>Report</h2>
           </div>
           <div id="report-view" class="report-view"></div>
         </section>
 
-        <section class="detail-panel">
-          <div class="section-heading">
-            <h2>Result</h2>
-          </div>
-          <pre id="result-json" class="json-view">{}</pre>
-        </section>
-
-        <section class="detail-panel evidence-panel">
+        <section class="detail-panel inspector-panel evidence-panel" data-inspector-panel="evidence">
           <div class="section-heading">
             <h2>Evidence</h2>
           </div>
           <div id="evidence-list" class="evidence-list"></div>
         </section>
+
+        <section class="detail-panel inspector-panel timeline-panel" data-inspector-panel="activity">
+          <div class="section-heading">
+            <h2>Activity</h2>
+          </div>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+
+        <section class="detail-panel inspector-panel memory-panel" data-inspector-panel="memory">
+          <div class="section-heading">
+            <h2>Memory</h2>
+          </div>
+          <div id="session-memory" class="memory-view"></div>
+        </section>
+
+        <section class="detail-panel inspector-panel" data-inspector-panel="json">
+          <div class="section-heading">
+            <h2>JSON</h2>
+          </div>
+          <pre id="result-json" class="json-view">{}</pre>
+        </section>
       </aside>
     </main>
 
-    <script src="/static/app.js?v=20260430-report-view"></script>
+    <script src="/static/app.js?v=20260501-research-qa"></script>
   </body>
 </html>

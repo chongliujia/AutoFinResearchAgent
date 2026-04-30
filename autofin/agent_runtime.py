@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable
+from typing import Any, Callable, Dict, Iterable
 
 from autofin.intent import ChatResponder
 from autofin.intent_router import IntentRouter
@@ -19,6 +19,7 @@ class AgentRuntime:
     policy_logger: PolicyLogger
     chat_responder: ChatResponder
     session_store: SessionStore
+    research_context_provider: Callable[[str], str] | None = None
 
     def list_sessions(self) -> list[JsonDict]:
         sessions = self.session_store.list_sessions()
@@ -46,7 +47,7 @@ class AgentRuntime:
 
     def preview_chat(self, message: str, session_id: str | None = None) -> JsonDict:
         session = self.session_store.get_or_create(session_id)
-        context = self.session_store.context_for(session.id)
+        context = self._context_for_session(session.id)
         routed_intent, policy_decision = self.route_message(message, session.id, context)
         user_message = self._ensure_user_message(session.id, message, routed_intent, policy_decision)
 
@@ -82,7 +83,7 @@ class AgentRuntime:
 
     def stream_chat_events(self, message: str, session_id: str | None = None) -> Iterable[tuple[str, JsonDict]]:
         session = self.session_store.get_or_create(session_id)
-        context = self.session_store.context_for(session.id)
+        context = self._context_for_session(session.id)
         routed_intent, policy_decision = self.route_message(message, session.id, context)
         self._ensure_user_message(session.id, message, routed_intent, policy_decision)
         yield "chat-meta", {
@@ -118,7 +119,7 @@ class AgentRuntime:
 
     def prepare_research_run(self, message: str, session_id: str | None = None) -> JsonDict:
         session = self.session_store.get_or_create(session_id)
-        context = self.session_store.context_for(session.id)
+        context = self._context_for_session(session.id)
         routed_intent, policy_decision = self.route_message(message, session.id, context)
         self._ensure_user_message(session.id, message, routed_intent, policy_decision)
         return {
@@ -165,6 +166,15 @@ class AgentRuntime:
             {"session_id": session_id},
         )
         return routed_intent, policy_decision
+
+    def _context_for_session(self, session_id: str) -> str:
+        context = self.session_store.context_for(session_id)
+        if not self.research_context_provider:
+            return context
+        research_context = self.research_context_provider(session_id)
+        if not research_context:
+            return context
+        return f"{context}\n\n{research_context}"
 
     def _resolve_from_session_memory(self, session_id: str, routed_intent: JsonDict) -> JsonDict:
         session = self.session_store.get(session_id)

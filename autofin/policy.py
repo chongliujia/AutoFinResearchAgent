@@ -32,7 +32,7 @@ class PolicyEngine:
         confidence = float(routed_intent.get("confidence", 0))
         missing_fields = list(routed_intent.get("missing_fields") or [])
 
-        if intent in {"general_chat", "explain_app", "configure_settings"}:
+        if intent in {"general_chat", "explain_app", "configure_settings", "research_qa"}:
             return PolicyDecision(
                 intent=intent,
                 confidence=confidence,

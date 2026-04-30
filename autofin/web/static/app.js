@@ -16,6 +16,7 @@ const nodes = {
   objective: document.querySelector("#objective"),
   runtimeStatus: document.querySelector("#runtime-status"),
   activeTaskId: document.querySelector("#active-task-id"),
+  taskProgress: document.querySelector("#task-progress"),
   sessionMemory: document.querySelector("#session-memory"),
   reportView: document.querySelector("#report-view"),
   timeline: document.querySelector("#timeline"),
@@ -30,6 +31,8 @@ const nodes = {
   modelTemperature: document.querySelector("#model-temperature"),
   resultJson: document.querySelector("#result-json"),
   evidenceList: document.querySelector("#evidence-list"),
+  inspectorTabs: document.querySelectorAll("[data-inspector-tab]"),
+  inspectorPanels: document.querySelectorAll("[data-inspector-panel]"),
   refreshTasks: document.querySelector("#refresh-tasks"),
   newSession: document.querySelector("#new-session"),
   clearSessions: document.querySelector("#clear-sessions"),
@@ -61,6 +64,21 @@ function renderEmpty(container, text) {
   empty.className = "empty";
   empty.textContent = text;
   container.appendChild(empty);
+}
+
+function setInspectorTab(tabName) {
+  nodes.inspectorTabs.forEach((button) => {
+    const active = button.dataset.inspectorTab === tabName;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  nodes.inspectorPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.inspectorPanel === tabName);
+  });
+}
+
+function hasReport(task) {
+  return Boolean(task?.result?.result?.data?.analysis?.report);
 }
 
 async function loadSkills() {
@@ -150,10 +168,12 @@ async function newSession() {
   state.activeSessionId = data.session.id;
   state.activeTaskId = null;
   nodes.activeTaskId.textContent = "No active task";
+  renderTaskProgress(null);
   nodes.timeline.innerHTML = "";
   renderJson({});
   renderReport(null);
   renderEmpty(nodes.evidenceList, "No evidence");
+  setInspectorTab("report");
   renderSessionMemory(data.session);
   renderChatMessages([]);
   await loadSessions();
@@ -182,10 +202,12 @@ async function clearSessions() {
   state.activeSessionId = data.active_session?.id || null;
   state.activeTaskId = null;
   nodes.activeTaskId.textContent = "No active task";
+  renderTaskProgress(null);
   nodes.timeline.innerHTML = "";
   renderJson({});
   renderReport(null);
   renderEmpty(nodes.evidenceList, "No evidence");
+  setInspectorTab("report");
   await loadSessions();
 }
 
@@ -197,16 +219,19 @@ async function openSession(sessionId) {
     nodes.activeTaskId.textContent = data.session.active_task_id;
     state.activeTaskId = data.session.active_task_id;
     try {
-      await loadTaskResult(data.session.active_task_id);
+      const task = await loadTaskResult(data.session.active_task_id);
+      setInspectorTab(hasReport(task) ? "report" : "activity");
     } catch (error) {
       renderMissingTask(data.session.active_task_id, error, data.session);
     }
   } else {
     state.activeTaskId = null;
     nodes.activeTaskId.textContent = "No active task";
+    renderTaskProgress(null);
     renderJson({});
     renderReport(null);
     renderEmpty(nodes.evidenceList, "No evidence");
+    setInspectorTab("report");
   }
   renderSessionMemory(data.session);
   nodes.taskList.querySelectorAll(".task-row").forEach((row) => row.classList.remove("active"));
@@ -244,6 +269,7 @@ async function openTask(taskId, options = {}) {
   state.inlineEventKeys = new Set();
   state.summaryAppended = false;
   nodes.activeTaskId.textContent = taskId;
+  renderTaskProgress(null);
   nodes.timeline.innerHTML = "";
 
   const task = await api(`/api/tasks/${taskId}`);
@@ -252,8 +278,9 @@ async function openTask(taskId, options = {}) {
     renderChatMessages(task.messages || []);
   }
   renderTaskResult(task);
+  setInspectorTab(hasReport(task) ? "report" : "activity");
 
-  const source = new EventSource(`/api/tasks/${taskId}/events`);
+  const source = new EventSource(`/api/tasks/${taskId}/events?cursor=${task.event_count || 0}`);
   state.eventSource = source;
   source.addEventListener("task-event", (message) => {
     const event = JSON.parse(message.data);
@@ -279,6 +306,7 @@ async function loadTaskResult(taskId) {
   const task = await api(`/api/tasks/${taskId}`);
   setStatus(task.status);
   renderTaskResult(task);
+  return task;
 }
 
 function renderMissingTask(taskId, error, session = null) {
@@ -293,6 +321,18 @@ function renderMissingTask(taskId, error, session = null) {
     error: error.message,
   });
   renderReport(null);
+  renderTaskProgress({
+    status: "missing",
+    progress: {
+      label: "Missing",
+      detail: "This task is not available in the current runtime.",
+      ticker: taskSummary?.ticker,
+      filing_type: taskSummary?.filing_type,
+      evidence_count: taskSummary?.evidence_count || 0,
+      warnings: ["Re-run the research task to restore events and evidence."],
+    },
+  });
+  setInspectorTab("json");
   renderEmpty(
     nodes.evidenceList,
     taskSummary
@@ -303,6 +343,8 @@ function renderMissingTask(taskId, error, session = null) {
 
 function renderTaskResult(task) {
   renderJson(task.result || { status: task.status, error: task.error });
+  renderTaskProgress(task);
+  renderTimeline(task.recent_events || []);
   renderReport(task);
   const evidence = task.result?.result?.evidence || [];
   nodes.evidenceList.innerHTML = "";
@@ -313,9 +355,13 @@ function renderTaskResult(task) {
   evidence.forEach((item) => {
     const row = document.createElement("div");
     row.className = "evidence-row";
+    if (item.citation_id) {
+      row.dataset.citationId = item.citation_id;
+    }
     const label = [item.kind || "evidence", item.section].filter(Boolean).join(" · ");
     row.innerHTML = `
       <strong>${escapeHtml(label || item.source || "evidence")}</strong>
+      ${item.citation_id ? `<small>${escapeHtml(item.citation_id)}</small>` : ""}
       <span>${escapeHtml(item.note || item.url || JSON.stringify(item))}</span>
       ${item.excerpt ? `<details><summary>Excerpt</summary><p>${escapeHtml(item.excerpt)}</p></details>` : ""}
       ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Source</a>` : ""}
@@ -324,9 +370,42 @@ function renderTaskResult(task) {
   });
 }
 
+function renderTaskProgress(task) {
+  if (!task) {
+    nodes.taskProgress.innerHTML = "";
+    return;
+  }
+  const progress = task.progress || {};
+  const meta = [
+    progress.ticker,
+    progress.filing_type,
+    typeof progress.evidence_count === "number" ? `${progress.evidence_count} evidence` : "",
+    progress.memo_status,
+  ].filter(Boolean);
+  const warnings = progress.warnings || [];
+  const stageClass = safeClassName(progress.stage || task.status || "queued");
+  nodes.taskProgress.innerHTML = `
+    <div class="stage-badge stage-${stageClass}">${escapeHtml(progress.label || task.status || "Queued")}</div>
+    <p>${escapeHtml(progress.detail || task.objective || "")}</p>
+    ${meta.length ? `<div class="task-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+    ${warnings.length ? `<div class="task-warning">${escapeHtml(warnings[0])}</div>` : ""}
+  `;
+}
+
+function renderTimeline(events) {
+  nodes.timeline.innerHTML = "";
+  if (!events.length) {
+    renderEmpty(nodes.timeline, "No events");
+    return;
+  }
+  events.forEach((event, index) => appendTimelineEvent({ index, ...event }));
+}
+
 function renderReport(task) {
   const data = task?.result?.result?.data;
   const report = data?.analysis?.report;
+  const memoMetadata = data?.analysis?.memo_metadata || {};
+  const artifacts = data?.analysis?.artifacts || [];
   if (!report) {
     renderEmpty(nodes.reportView, "No report");
     return;
@@ -345,6 +424,7 @@ function renderReport(task) {
     <div class="report-header">
       <strong>${escapeHtml(report.title || "Research Memo")}</strong>
       <span>${escapeHtml(meta.join(" · "))}</span>
+      <span>${escapeHtml([report.memo_style, memoMetadata.memo_status, memoMetadata.model].filter(Boolean).join(" · "))}</span>
     </div>
     <div class="report-section">
       <div class="report-title">Executive Summary</div>
@@ -365,7 +445,7 @@ function renderReport(task) {
         ? `
           <div class="report-section">
             <div class="report-title">Risk Watchlist</div>
-            <ul>${riskWatchlist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            <ul>${riskWatchlist.map((item) => `<li>${renderRiskItem(item)}</li>`).join("")}</ul>
           </div>
         `
         : ""
@@ -380,15 +460,45 @@ function renderReport(task) {
         `
         : ""
     }
+    ${
+      artifacts.length
+        ? `
+          <div class="report-section">
+            <div class="report-title">Artifacts</div>
+            ${artifacts
+              .map(
+                (artifact, index) => `
+                  <div class="artifact-row">
+                    <div>
+                      <strong>${escapeHtml(artifact.kind || "artifact")}</strong>
+                      ${
+                        artifact.format === "markdown"
+                          ? `<button type="button" data-artifact-preview="${index}">Preview</button>`
+                          : ""
+                      }
+                    </div>
+                    <span>${escapeHtml(artifact.path || "")}</span>
+                  </div>
+                `,
+              )
+              .join("")}
+            <div id="artifact-preview" class="markdown-preview" hidden></div>
+          </div>
+        `
+        : ""
+    }
   `;
+  bindReportInteractions();
 }
 
 function renderObservation(item) {
   const supportingPoints = item.supporting_points || [];
+  const citations = item.citations || [];
   return `
     <div class="report-observation">
       <strong>${escapeHtml(item.title || item.section || "Observation")}</strong>
       <p>${escapeHtml(item.summary || "")}</p>
+      ${citations.length ? `<div class="citation-row">${citations.map(renderCitation).join("")}</div>` : ""}
       ${
         supportingPoints.length
           ? `<ul>${supportingPoints.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul>`
@@ -396,6 +506,127 @@ function renderObservation(item) {
       }
     </div>
   `;
+}
+
+function renderRiskItem(item) {
+  if (typeof item === "string") {
+    return escapeHtml(item);
+  }
+  const citations = item.citations || [];
+  return `
+    <strong>${escapeHtml(item.risk || "Risk")}</strong>
+    ${item.why_it_matters ? `<span>${escapeHtml(item.why_it_matters)}</span>` : ""}
+    ${citations.length ? `<div class="citation-row">${citations.map(renderCitation).join("")}</div>` : ""}
+  `;
+}
+
+function renderCitation(citationId) {
+  return `<button type="button" class="citation-chip" data-citation-target="${escapeHtml(citationId)}">${escapeHtml(citationId)}</button>`;
+}
+
+function bindReportInteractions() {
+  nodes.reportView.querySelectorAll("[data-citation-target]").forEach((button) => {
+    button.addEventListener("click", () => focusEvidence(button.dataset.citationTarget));
+  });
+  nodes.reportView.querySelectorAll("[data-artifact-preview]").forEach((button) => {
+    button.addEventListener("click", () => previewArtifact(Number(button.dataset.artifactPreview), button));
+  });
+}
+
+function focusEvidence(citationId) {
+  setInspectorTab("evidence");
+  nodes.evidenceList.querySelectorAll(".evidence-row.focused").forEach((row) => {
+    row.classList.remove("focused");
+  });
+  const target = Array.from(nodes.evidenceList.querySelectorAll(".evidence-row")).find(
+    (row) => row.dataset.citationId === citationId,
+  );
+  if (!target) {
+    return;
+  }
+  target.classList.add("focused");
+  target.querySelector("details")?.setAttribute("open", "");
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+async function previewArtifact(index, button) {
+  if (!state.activeTaskId) {
+    return;
+  }
+  const preview = nodes.reportView.querySelector("#artifact-preview");
+  if (!preview) {
+    return;
+  }
+  button.disabled = true;
+  const originalText = button.textContent;
+  button.textContent = "Loading";
+  preview.hidden = false;
+  preview.innerHTML = `<div class="empty compact-empty">Loading report preview</div>`;
+  try {
+    const payload = await api(`/api/tasks/${state.activeTaskId}/artifacts/${index}`);
+    preview.innerHTML = renderMarkdownPreview(payload.content || "");
+    preview.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    preview.innerHTML = `<div class="empty compact-empty">Preview failed: ${escapeHtml(error.message)}</div>`;
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function renderMarkdownPreview(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const html = [];
+  let inList = false;
+
+  const closeList = () => {
+    if (inList) {
+      html.push("</ul>");
+      inList = false;
+    }
+  };
+
+  lines.forEach((line) => {
+    if (!line.trim()) {
+      closeList();
+      return;
+    }
+    const escaped = escapeHtml(line);
+    if (line.startsWith("### ")) {
+      closeList();
+      html.push(`<h4>${escapeHtml(line.slice(4))}</h4>`);
+      return;
+    }
+    if (line.startsWith("## ")) {
+      closeList();
+      html.push(`<h3>${escapeHtml(line.slice(3))}</h3>`);
+      return;
+    }
+    if (line.startsWith("# ")) {
+      closeList();
+      html.push(`<h2>${escapeHtml(line.slice(2))}</h2>`);
+      return;
+    }
+    if (line.startsWith("- ")) {
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+      return;
+    }
+    if (line.startsWith("> ")) {
+      closeList();
+      html.push(`<blockquote>${escapeHtml(line.slice(2))}</blockquote>`);
+      return;
+    }
+    closeList();
+    html.push(`<p>${escaped}</p>`);
+  });
+  closeList();
+  return html.join("");
 }
 
 async function refreshActiveSessionMemory() {
@@ -497,8 +728,9 @@ function appendChatMessage(message) {
   row.className = `chat-message chat-${message.role}`;
   row.innerHTML = `
     <div class="chat-role">${escapeHtml(message.role)}</div>
-    <div class="chat-content">${escapeHtml(message.content)}</div>
+    <div class="chat-content">${renderChatContent(message.content)}</div>
   `;
+  bindChatCitations(row);
   nodes.chatLog.appendChild(row);
   nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
   return row;
@@ -508,12 +740,28 @@ function updateChatMessage(row, message) {
   row.className = `chat-message chat-${message.role}`;
   row.innerHTML = `
     <div class="chat-role">${escapeHtml(message.role)}</div>
-    <div class="chat-content">${escapeHtml(message.content)}</div>
+    <div class="chat-content">${renderChatContent(message.content)}</div>
   `;
+  bindChatCitations(row);
   nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
 }
 
+function renderChatContent(content) {
+  return escapeHtml(content || "").replace(/\[(E\d+)\]/g, (_, citationId) => {
+    return `<button type="button" class="inline-citation" data-citation-target="${citationId}">[${citationId}]</button>`;
+  });
+}
+
+function bindChatCitations(root) {
+  root.querySelectorAll("[data-citation-target]").forEach((button) => {
+    button.addEventListener("click", () => focusEvidence(button.dataset.citationTarget));
+  });
+}
+
 function appendInlineEvent(event) {
+  if (event.event_type === "task_stage") {
+    return;
+  }
   const key = `${event.index}-${event.event_type}`;
   if (state.inlineEventKeys.has(key)) {
     return;
@@ -612,16 +860,69 @@ function appendCompletionSummary(task) {
 
 function appendTimelineEvent(event) {
   const item = document.createElement("li");
-  item.className = "timeline-item";
+  const display = timelineDisplay(event);
+  item.className = `timeline-item timeline-${safeClassName(display.kind)}`;
   const time = new Date(event.timestamp).toLocaleTimeString();
   item.innerHTML = `
     <span class="timeline-time">${escapeHtml(time)}</span>
     <div>
-      <div class="timeline-title">${escapeHtml(event.message)}</div>
-      <div class="timeline-payload">${escapeHtml(JSON.stringify(event.payload, null, 2))}</div>
+      <div class="timeline-title">${escapeHtml(display.title)}</div>
+      <div class="timeline-payload">${escapeHtml(display.detail)}</div>
     </div>
   `;
   nodes.timeline.appendChild(item);
+}
+
+function timelineDisplay(event) {
+  const payload = event.payload || {};
+  if (event.event_type === "task_stage") {
+    return {
+      kind: payload.stage || "stage",
+      title: payload.label || event.message,
+      detail: payload.detail || "",
+    };
+  }
+  if (event.event_type === "task_created") {
+    const inputs = payload.inputs || {};
+    return {
+      kind: "created",
+      title: "Task queued",
+      detail: [inputs.ticker, inputs.filing_type, payload.skill_name].filter(Boolean).join(" · "),
+    };
+  }
+  if (event.event_type === "tool_call_requested") {
+    return {
+      kind: "tool",
+      title: "Skill selected",
+      detail: `${payload.tool || "skill"} permissions checked`,
+    };
+  }
+  if (event.event_type === "runtime_started") {
+    return {
+      kind: "runtime",
+      title: "LangGraph workflow started",
+      detail: payload.skill_name || "",
+    };
+  }
+  if (event.event_type === "tool_call_completed") {
+    return {
+      kind: "completed",
+      title: "Evidence collected",
+      detail: `${payload.evidence_count || 0} evidence items ready`,
+    };
+  }
+  if (event.event_type === "runtime_failed") {
+    return {
+      kind: "failed",
+      title: "Task failed",
+      detail: payload.error || event.message,
+    };
+  }
+  return {
+    kind: "event",
+    title: event.message || formatEventType(event.event_type),
+    detail: JSON.stringify(payload, null, 2),
+  };
 }
 
 function formatEventType(eventType) {
@@ -809,6 +1110,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function safeClassName(value) {
+  return String(value || "item").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 if (nodes.form) {
   nodes.form.addEventListener("submit", createTask);
 }
@@ -817,6 +1122,9 @@ nodes.chatForm.addEventListener("submit", sendChat);
 nodes.refreshTasks.addEventListener("click", loadSessions);
 nodes.newSession.addEventListener("click", newSession);
 nodes.clearSessions.addEventListener("click", clearSessions);
+nodes.inspectorTabs.forEach((button) => {
+  button.addEventListener("click", () => setInspectorTab(button.dataset.inspectorTab));
+});
 
 renderEmpty(nodes.chatLog, "Start with a research request");
 renderEmpty(nodes.taskList, "No sessions");
@@ -826,6 +1134,8 @@ renderEmpty(nodes.evidenceList, "No evidence");
 renderEmpty(nodes.sessionMemory, "No session memory");
 renderEmpty(nodes.reportView, "No report");
 renderJson({});
+renderTaskProgress(null);
+setInspectorTab("report");
 
 loadSkills();
 loadModelConfig();

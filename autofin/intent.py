@@ -133,11 +133,71 @@ class DeterministicIntentParser:
 @dataclass
 class DeterministicChatResponder:
     def reply(self, message: str, context: str = "") -> tuple[str, JsonDict]:
+        research_reply = self._research_context_reply(message, context)
+        if research_reply:
+            return research_reply, {"responder": "deterministic_research_context"}
         parser = DeterministicIntentParser()
         return parser._general_reply(message), {"responder": "deterministic"}
 
     def stream_reply(self, message: str, context: str = "") -> Iterable[str]:
         yield self.reply(message, context)[0]
+
+    def _research_context_reply(self, message: str, context: str) -> str:
+        if "Active research context:" not in context:
+            return ""
+        citation_match = re.search(r"\b(E\d+)\b", message, flags=re.IGNORECASE)
+        if citation_match:
+            citation = citation_match.group(1).upper()
+            evidence_line = self._find_context_line(context, f"[{citation}]")
+            if evidence_line:
+                return f"{citation} 对应的证据是：{evidence_line.lstrip('- ').strip()}"
+            return f"当前研究上下文里没有找到 [{citation}] 对应证据。"
+
+        lowered = message.lower()
+        if "风险" in message or "risk" in lowered:
+            risks = self._context_section(context, "Risk watchlist:", "Evidence references:")
+            if risks:
+                return "基于当前报告，主要风险包括：\n" + "\n".join(risks[:4])
+            return "当前报告里没有足够的 risk watchlist 信息。"
+
+        if any(token in message for token in ["总结", "三点", "结论"]) or any(
+            token in lowered for token in ["summarize", "summary", "conclusion"]
+        ):
+            observations = self._context_section(context, "Key observations:", "Risk watchlist:")
+            if observations:
+                return "基于当前报告，可以总结为：\n" + "\n".join(observations[:3])
+            summary = self._find_context_line(context, "Executive summary:")
+            if summary:
+                return summary.replace("Executive summary:", "基于当前报告：", 1)
+            return "当前报告上下文不足，无法可靠总结。"
+
+        if any(token in message for token in ["证据", "来源"]) or any(token in lowered for token in ["evidence", "source"]):
+            evidence = self._context_section(context, "Evidence references:", "")
+            if evidence:
+                return "当前报告可追溯到这些证据：\n" + "\n".join(evidence[:5])
+            return "当前报告上下文里没有可用证据引用。"
+
+        return ""
+
+    def _find_context_line(self, context: str, needle: str) -> str:
+        for line in context.splitlines():
+            if needle in line:
+                return line.strip()
+        return ""
+
+    def _context_section(self, context: str, start: str, end: str) -> list[str]:
+        lines = context.splitlines()
+        collecting = False
+        section = []
+        for line in lines:
+            if line.strip() == start:
+                collecting = True
+                continue
+            if collecting and end and line.strip() == end:
+                break
+            if collecting and line.startswith("- "):
+                section.append(line.strip())
+        return section
 
 
 @dataclass
@@ -158,6 +218,8 @@ class LangChainChatResponder:
                     self._system_message(
                         "You are AutoFinResearchAgent, a local-first financial research assistant. "
                         "Answer normal conversation naturally and concisely. "
+                        "When Active research context is provided, answer follow-up questions from that context only, "
+                        "cite evidence ids like [E1], and say when the report lacks enough evidence. "
                         "For requests that need financial research execution, tell the user to include a ticker and focus. "
                         f"Use this session context when relevant:\n{context}"
                     ),
@@ -183,6 +245,8 @@ class LangChainChatResponder:
                     self._system_message(
                         "You are AutoFinResearchAgent, a local-first financial research assistant. "
                         "Answer normal conversation naturally and concisely. "
+                        "When Active research context is provided, answer follow-up questions from that context only, "
+                        "cite evidence ids like [E1], and say when the report lacks enough evidence. "
                         "For requests that need financial research execution, tell the user to include a ticker and focus. "
                         f"Use this session context when relevant:\n{context}"
                     ),

@@ -29,6 +29,12 @@ The repository now contains a runnable Python MVP:
 - Research task result summaries written back into session memory
 - Research task records and results persisted locally so active task views survive service restarts
 - Evidence-backed research memo structure and Report panel for SEC filing results
+- Optional LLM evidence-grounded memo synthesis with extractive fallback
+- Citation validation and Markdown memo artifact generation
+- Tabbed task inspector with Report, Evidence, Activity, Memory, and JSON views
+- Clickable citations that jump from Report or chat answers to the matching Evidence item
+- Runtime progress stages for readable task status and Activity timelines
+- Session-aware research follow-up QA grounded in the active task report and evidence
 - Tests for runtime, permissions, skills, orchestrator, and Web API
 
 ## Architecture
@@ -149,6 +155,7 @@ UI-saved model settings persist locally:
 .autofin/secrets.json   # api_key
 .autofin/sessions/      # chat sessions and transcripts
 .autofin/tasks/         # research task records, events, and results
+.autofin/artifacts/     # generated Markdown memo artifacts
 ```
 
 The `.autofin/` directory is gitignored.
@@ -199,7 +206,8 @@ The current screen is organized as:
 ```text
 Left:   Sessions + Skills + Model API
 Center: Chat log + Composer
-Right:  Current task + Activity + Result + Evidence
+Right:  Current task progress + tabbed inspector
+        Report | Evidence | Activity | Memory | JSON
 ```
 
 Example prompt:
@@ -234,7 +242,9 @@ tool_call_completed: sec_filing_analysis
   evidence
 ```
 
-The first automated filing analysis pass downloads the SEC filing document and extracts evidence-backed highlights for business, risk factors, MD&A, and financial statements. It also builds a structured memo under `analysis.report`, rendered in the right-side Report panel. The output is intentionally extractive: it cites filing excerpts and avoids presenting the result as investment advice. Full numeric statement parsing and LLM-written research memos are planned as the next layer.
+The automated filing analysis pass downloads the SEC filing document and extracts evidence-backed highlights for business, risk factors, MD&A, and financial statements. It also builds a structured memo under `analysis.report`, rendered in the right-side Report panel. When Model API is configured, the Web runtime uses the configured LLM to synthesize an evidence-grounded memo that must cite extracted evidence ids such as `E1`. Citations are validated against real evidence ids; invalid or missing citations produce `analysis.citation_validation` warnings. Report and chat citations are clickable and jump to the matching Evidence item. Each completed filing analysis also writes a Markdown memo under `.autofin/artifacts/`, and the UI can preview the generated memo from the Report panel. If the model is unavailable or returns invalid output, the task falls back to an extractive memo instead of failing. Numeric statement parsing is planned as the next layer.
+
+Completed research tasks can be queried again in the same session. Follow-up questions such as `这个公司的主要风险是什么？`, `解释 E3`, or `总结成三点` are routed as `research_qa`; the chat responder receives the active task report and evidence context and answers with evidence citations when available.
 
 ## API
 
@@ -263,6 +273,7 @@ Tasks:
 GET /api/tasks
 POST /api/tasks
 GET /api/tasks/{task_id}
+GET /api/tasks/{task_id}/artifacts/{artifact_index}
 GET /api/tasks/{task_id}/events
 ```
 
@@ -298,14 +309,15 @@ curl -sS http://127.0.0.1:8098/api/chat \
 - [Web UI Development Notes](docs/web-ui.md)
 - [Intent Routing Design](docs/intent-routing.md)
 - [Session, Memory, and Agent Runtime](docs/session-memory-runtime.md)
+- [Product Capabilities and Differentiation](docs/product-capabilities.md)
 
 ## Next Steps
 
-1. Add LLM-written filing memo generation grounded in extracted evidence.
-2. Add numeric financial statement parsing and period-over-period comparisons.
+1. Add numeric financial statement parsing and period-over-period comparisons.
+2. Add report export controls and copy actions.
 3. Add SQLite-backed task/session persistence.
 4. Add LangGraph checkpointing and task resume.
 5. Add a permission approval panel for network/filesystem access.
-6. Add generated report artifacts and Markdown/HTML memo previews.
+6. Add multi-task comparison and `write_report` workflows.
 7. Migrate the static UI to React once the API shape stabilizes.
 8. Wrap the Web UI with Tauri when the local desktop workflow is mature.

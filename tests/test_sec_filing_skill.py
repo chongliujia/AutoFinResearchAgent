@@ -1,4 +1,5 @@
 from autofin.skills import SecFilingAnalysisSkill
+from autofin.skills.sec_filing import MarkdownMemoArtifactWriter
 
 
 class FakeSECClient:
@@ -42,15 +43,89 @@ class FakeSECClient:
         """
 
 
-def test_sec_filing_skill_returns_structured_mock_result():
-    result = SecFilingAnalysisSkill(FakeSECClient()).run({"ticker": "aapl", "filing_type": "10-k"})
+def test_sec_filing_skill_returns_structured_mock_result(tmp_path):
+    result = SecFilingAnalysisSkill(
+        FakeSECClient(),
+        artifact_writer=MarkdownMemoArtifactWriter(tmp_path),
+    ).run({"ticker": "aapl", "filing_type": "10-k"})
 
     assert result.data["ticker"] == "AAPL"
     assert result.data["filing_type"] == "10-K"
     assert result.data["status"] == "analysis_completed"
     assert "analysis" in result.data
-    assert result.data["analysis"]["report"]["title"] == "SEC Filing Extractive Research Memo"
+    assert result.data["analysis"]["report"]["title"] == "AAPL 10-K Evidence-Grounded Memo"
+    assert result.data["analysis"]["report"]["memo_style"] == "extractive"
+    assert result.data["analysis"]["memo_metadata"]["memo_status"] == "extractive_fallback"
+    assert result.data["analysis"]["citation_validation"]["status"] == "passed"
+    assert result.data["analysis"]["artifacts"][0]["kind"] == "markdown_memo"
+    assert "Evidence References" in (tmp_path / "aapl_10-k_0000320193-25-000079_memo.md").read_text()
     assert result.data["analysis"]["report"]["key_observations"]
     assert result.data["analysis"]["sections"]["risk_factors"]["highlights"]
+    assert result.evidence[2]["citation_id"] == "E1"
     assert any(item["kind"] == "filing_excerpt" for item in result.evidence)
     assert result.evidence
+
+
+def test_sec_filing_skill_accepts_model_backed_memo_synthesizer(tmp_path):
+    class FakeMemoSynthesizer:
+        def synthesize(self, filing, analysis, evidence):
+            return {
+                "report": {
+                    "title": "Model memo",
+                    "memo_style": "llm_evidence_grounded",
+                    "executive_summary": "Evidence-grounded memo.",
+                    "key_observations": [
+                        {"title": "Business", "summary": "Business summary", "citations": ["E1"]}
+                    ],
+                    "risk_watchlist": [
+                        {"risk": "Competition", "why_it_matters": "Margin pressure", "citations": ["E2"]}
+                    ],
+                    "limitations": ["Evidence only"],
+                },
+                "metadata": {"memo_synthesizer": "fake", "memo_status": "model_synthesized"},
+            }
+
+    result = SecFilingAnalysisSkill(
+        FakeSECClient(),
+        memo_synthesizer=FakeMemoSynthesizer(),
+        artifact_writer=MarkdownMemoArtifactWriter(tmp_path),
+    ).run({"ticker": "aapl", "filing_type": "10-k"})
+
+    assert result.data["analysis"]["report"]["memo_style"] == "llm_evidence_grounded"
+    assert result.data["analysis"]["report"]["key_observations"][0]["citations"] == ["E1"]
+    assert result.data["analysis"]["memo_metadata"]["memo_status"] == "model_synthesized"
+    assert result.data["analysis"]["citation_validation"]["status"] == "passed"
+    assert result.data["analysis"]["extractive_report"]["memo_style"] == "extractive"
+
+
+def test_sec_filing_skill_marks_invalid_model_citations(tmp_path):
+    class BadMemoSynthesizer:
+        def synthesize(self, filing, analysis, evidence):
+            return {
+                "report": {
+                    "title": "Bad model memo",
+                    "memo_style": "llm_evidence_grounded",
+                    "executive_summary": "Uses a bad citation.",
+                    "key_observations": [
+                        {"title": "Business", "summary": "Business summary", "citations": ["E999"]}
+                    ],
+                    "risk_watchlist": [
+                        {"risk": "Competition", "why_it_matters": "Margin pressure", "citations": []}
+                    ],
+                    "limitations": ["Evidence only"],
+                },
+                "metadata": {"memo_synthesizer": "fake", "memo_status": "model_synthesized"},
+            }
+
+    result = SecFilingAnalysisSkill(
+        FakeSECClient(),
+        memo_synthesizer=BadMemoSynthesizer(),
+        artifact_writer=MarkdownMemoArtifactWriter(tmp_path),
+    ).run({"ticker": "aapl", "filing_type": "10-k"})
+
+    validation = result.data["analysis"]["citation_validation"]
+    assert validation["status"] == "warning"
+    assert validation["invalid_citations"] == ["E999"]
+    assert validation["missing_citation_items"] == ["risk_watchlist[1]"]
+    assert result.data["analysis"]["memo_metadata"]["memo_status"] == "model_synthesized_with_warnings"
+    assert any("citation validation" in warning for warning in result.warnings)

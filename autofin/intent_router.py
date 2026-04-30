@@ -14,6 +14,7 @@ SUPPORTED_INTENTS = {
     "general_chat",
     "explain_app",
     "configure_settings",
+    "research_qa",
     "research_sec_filing",
     "research_market_data",
     "research_news",
@@ -133,6 +134,15 @@ class DeterministicIntentRouter:
                     intent="explain_app",
                     confidence=0.75,
                     assistant_reply="这是一个本地优先的金融研究 agent。聊天区负责对话，研究任务会在右侧展示执行过程、结果和证据。",
+                )
+            )
+
+        if self._looks_like_research_followup(lowered, text, context):
+            return self._with_router(
+                RoutedIntent(
+                    intent="research_qa",
+                    confidence=0.8,
+                    assistant_reply="我会基于当前研究任务的 report 和 evidence 回答。",
                 )
             )
 
@@ -266,6 +276,32 @@ class DeterministicIntentRouter:
         ]
         return bool(filing_type) or self._contains_any(lowered, message, markers)
 
+    def _looks_like_research_followup(self, lowered: str, message: str, context: str) -> bool:
+        if "Active research context:" not in context:
+            return False
+        if re.search(r"\b[A-Z]{1,5}\b", message) and self._contains_any(lowered, message, ["分析", "analyze", "10-k", "10-q"]):
+            return False
+        markers = [
+            "这个公司",
+            "这家公司",
+            "这个报告",
+            "刚才",
+            "主要风险",
+            "风险是什么",
+            "解释",
+            "证据",
+            "结论",
+            "总结",
+            "三点",
+            "来源",
+            "citation",
+            "evidence",
+            "risk",
+            "summarize",
+            "explain",
+        ]
+        return bool(re.search(r"\bE\d+\b", message)) or self._contains_any(lowered, message, markers)
+
     def _contains_any(self, lowered: str, original: str, markers: list[str]) -> bool:
         return any(marker in lowered or marker in original for marker in markers)
 
@@ -355,6 +391,7 @@ class LLMIntentRouter:
             f"{', '.join(sorted(SUPPORTED_INTENTS))}. "
             "Extract fields only; do not run tools and do not fabricate data. "
             "Use general_chat for ordinary conversation. "
+            "Use research_qa when the user asks a follow-up about the active report, evidence ids, citations, conclusions, risks, or summary in session context. "
             "If the user asks to analyze a public stock or company without naming a data source, "
             "classify it as research_sec_filing and default filing_type to 10-K because that is the currently available executable research workflow. "
             "Use research_sec_filing only for SEC filing, 10-K, 10-Q, annual report, quarterly report, "
@@ -367,7 +404,7 @@ class LLMIntentRouter:
         if context:
             prompt += (
                 " Use the session context to resolve follow-up phrases like "
-                "'继续刚才那个', 'that company', 'same filing', or '整理成 memo'. "
+                "'继续刚才那个', 'that company', 'same filing', 'E3', '这个结论', or '整理成 memo'. "
                 f"Session context:\n{context}"
             )
         return prompt

@@ -21,7 +21,8 @@ http://127.0.0.1:8097
 ```text
 左侧：Sessions + Skills + Model API
 中间：Chat log + Composer
-右侧：Current task + Activity + Result JSON + Evidence
+右侧：Current task progress + tabbed inspector
+      Report | Evidence | Activity | Memory | JSON
 ```
 
 这个布局刻意接近本地 agent app：用户主要在中间对话，系统状态和证据放到右侧 inspector。
@@ -45,11 +46,11 @@ user message
   ↓
 intent routing
   ↓
-general reply or structured task
+general reply, research follow-up QA, or structured task
   ↓
 LangGraph workflow
   ↓
-inline events + inspector activity + evidence + result
+inline events + task progress + report/evidence/artifacts
 ```
 
 对于普通对话，后端会直接返回 assistant message，不创建任务。对于研究任务，解析器会从文本里抽取：
@@ -65,9 +66,11 @@ inline events + inspector activity + evidence + result
 
 - 中间区域优先服务对话，不放大表单
 - 输入框固定在底部，形成持续 session 的感觉
-- LangGraph 事件既放入右侧 Activity，也内联进入对话流
+- LangGraph 事件汇总成可读 Activity，关键 tool call 也内联进入对话流
 - Skill 调用在对话流中用可折叠 tool call 卡片展示
-- Activity、Evidence、Result 放在右侧 inspector
+- Report、Evidence、Activity、Memory、JSON 放在右侧 tabbed inspector
+- Report 和聊天里的 citation 可以点击跳转到 Evidence
+- Markdown memo artifact 可以在 Report 面板预览
 - 左侧保留 sessions 和 skills，方便切换上下文
 - 左侧提供 Model API 配置入口，API key 只显示脱敏状态
 - 表单能力保留在 API 层，UI 不再把它作为主路径
@@ -128,6 +131,7 @@ GET /api/skills
 GET /api/tasks
 POST /api/tasks
 GET /api/tasks/{task_id}
+GET /api/tasks/{task_id}/artifacts/{artifact_index}
 GET /api/tasks/{task_id}/events
 ```
 
@@ -137,6 +141,8 @@ GET /api/tasks/{task_id}/events
 
 ```http
 POST /api/chat
+POST /api/chat/stream
+POST /api/research/run
 ```
 
 请求：
@@ -147,7 +153,7 @@ POST /api/chat
 }
 ```
 
-响应会包含 assistant message、解析出的结构化字段，以及创建出的 task。
+`/api/chat/stream` 会流式返回普通对话、研究追问或确认卡片。`/api/research/run` 在用户点击 Run Research 后创建结构化任务。
 
 ### Model Settings
 
@@ -168,7 +174,7 @@ curl -sS http://127.0.0.1:8097/api/tasks \
 
 1. 增加 permission approval panel
 2. 增加 trace event 详情抽屉
-3. 增加 generated report 预览
-4. 增加 artifact 文件列表
+3. 增加 report export / copy actions
+4. 增加 artifact 文件列表和版本管理
 5. 增加 watchlist 和 scheduled research
 6. 迁移到 React + typed API client

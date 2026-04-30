@@ -42,6 +42,7 @@ class TaskRecord:
     updated_at: str = field(default_factory=utc_now)
 
     def public_view(self) -> JsonDict:
+        progress = self.progress_view()
         return {
             "id": self.id,
             "objective": self.objective,
@@ -55,6 +56,36 @@ class TaskRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "event_count": len(self.events),
+            "recent_events": self.events[-20:],
+            "progress": progress,
+        }
+
+    def progress_view(self) -> JsonDict:
+        stage_events = [event for event in self.events if event.get("event_type") == "task_stage"]
+        current = stage_events[-1]["payload"] if stage_events else {}
+        skill_result = (self.result or {}).get("result", {})
+        data = skill_result.get("data", {})
+        analysis = data.get("analysis", {})
+        evidence = skill_result.get("evidence", [])
+        warnings = skill_result.get("warnings", [])
+        if self.status == "failed":
+            stage = "failed"
+            label = "Failed"
+        elif self.status == "completed":
+            stage = "completed"
+            label = "Completed"
+        else:
+            stage = current.get("stage") or ("queued" if self.status == "queued" else "running")
+            label = current.get("label") or stage.replace("_", " ").title()
+        return {
+            "stage": stage,
+            "label": label,
+            "detail": current.get("detail") or self.objective,
+            "ticker": data.get("ticker") or self.inputs.get("ticker"),
+            "filing_type": data.get("filing_type") or self.inputs.get("filing_type"),
+            "evidence_count": len(evidence),
+            "memo_status": analysis.get("memo_metadata", {}).get("memo_status"),
+            "warnings": warnings,
         }
 
     def to_dict(self) -> JsonDict:
@@ -121,6 +152,7 @@ class TaskStore:
             policy_logger=self._policy_logger,
             chat_responder=self._chat_responder,
             session_store=self._session_store,
+            research_context_provider=self._research_context_for_session,
         )
         if self._persist_tasks:
             self._load_tasks()
@@ -310,6 +342,12 @@ class TaskStore:
         record = self.get_task(task_id)
         self._set_status(task_id, "running")
         skill = self._registry.get(record.skill_name)
+        self._append_stage(
+            task_id,
+            "planning",
+            "Planning",
+            f"Preparing {record.inputs.get('ticker', 'the company')} {record.inputs.get('filing_type', 'filing')} research.",
+        )
         self._append_event(
             task_id,
             "tool_call_requested",
@@ -319,6 +357,12 @@ class TaskStore:
                 "inputs": record.inputs,
                 "permissions": skill.permissions.to_dict(),
             },
+        )
+        self._append_stage(
+            task_id,
+            "retrieving",
+            "Retrieving Filing",
+            f"Looking up and downloading the latest {record.inputs.get('filing_type', 'filing')} from SEC EDGAR.",
         )
         self._append_event(
             task_id,
@@ -339,14 +383,27 @@ class TaskStore:
                     inputs=record.inputs,
                 )
             )
+            skill_result = result.get("result", {})
+            data = skill_result.get("data", {})
+            evidence = skill_result.get("evidence", [])
+            self._append_stage(
+                task_id,
+                "extracting_evidence",
+                "Extracting Evidence",
+                f"Extracted {len([item for item in evidence if item.get('kind') == 'filing_excerpt'])} filing excerpts for analysis.",
+            )
+            self._append_stage(
+                task_id,
+                "synthesizing_memo",
+                "Synthesizing Memo",
+                "Generated an evidence-grounded memo and citation map.",
+            )
             with self._lock:
                 current = self._tasks[task_id]
                 current.result = result
                 current.status = "completed"
                 current.updated_at = utc_now()
                 self._persist_task(current)
-            skill_result = result.get("result", {})
-            evidence = skill_result.get("evidence", [])
             self._append_event(
                 task_id,
                 "tool_call_completed",
@@ -358,6 +415,12 @@ class TaskStore:
                     "evidence_count": len(evidence),
                     "evidence": evidence,
                 },
+            )
+            self._append_stage(
+                task_id,
+                "completed",
+                "Completed",
+                f"Report ready for {data.get('ticker') or record.inputs.get('ticker')} {data.get('filing_type') or record.inputs.get('filing_type')}.",
             )
             self._append_event(
                 task_id,
@@ -373,6 +436,7 @@ class TaskStore:
                 current.status = "failed"
                 current.updated_at = utc_now()
                 self._persist_task(current)
+            self._append_stage(task_id, "failed", "Failed", self._failure_hint(str(exc)))
             self._append_event(task_id, "runtime_failed", "Research task failed", {"error": str(exc)})
 
     def _record_task_summary(self, record: TaskRecord, result: JsonDict) -> None:
@@ -393,6 +457,86 @@ class TaskStore:
         }
         self._session_store.add_task_summary(record.session_id, summary)
 
+    def _research_context_for_session(self, session_id: str) -> str:
+        try:
+            session = self._session_store.get(session_id)
+        except KeyError:
+            return ""
+        task_id = session.memory.active_task_id
+        if not task_id and session.memory.task_summaries:
+            task_id = session.memory.task_summaries[-1].get("task_id")
+        if not task_id:
+            return ""
+        try:
+            task = self.get_task(str(task_id))
+        except KeyError:
+            return ""
+        if task.status != "completed" or not task.result:
+            return ""
+
+        skill_result = task.result.get("result", {})
+        data = skill_result.get("data", {})
+        analysis = data.get("analysis", {})
+        report = analysis.get("report", {})
+        report_citations = report.get("citations") or {}
+        evidence = skill_result.get("evidence", [])
+        observations = report.get("key_observations") or []
+        risks = report.get("risk_watchlist") or []
+        lines = [
+            "Active research context:",
+            f"Task id: {task.id}",
+            f"Company: {data.get('company_name') or data.get('ticker')}",
+            f"Ticker: {data.get('ticker')}",
+            f"Filing type: {data.get('filing_type')}",
+            f"Filed: {data.get('filing_date')}",
+            f"Summary: {data.get('summary') or report.get('executive_summary') or ''}",
+            "Answering rule: answer follow-up questions only from this report and evidence. Cite evidence ids like [E1]. If the context is insufficient, say so.",
+        ]
+        if report.get("executive_summary"):
+            lines.append(f"Executive summary: {self._compact(report.get('executive_summary'), 700)}")
+        if observations:
+            lines.append("Key observations:")
+            for item in observations[:5]:
+                if not isinstance(item, dict):
+                    continue
+                citations = " ".join(f"[{citation}]" for citation in item.get("citations") or [])
+                if not citations and item.get("section"):
+                    citations = " ".join(f"[{citation}]" for citation in report_citations.get(item.get("section"), [])[:3])
+                title = item.get("title") or item.get("section") or "Observation"
+                summary = self._compact(item.get("summary") or "", 420)
+                lines.append(f"- {title}: {summary} {citations}".strip())
+        if risks:
+            lines.append("Risk watchlist:")
+            risk_citations = " ".join(f"[{citation}]" for citation in report_citations.get("risk_factors", [])[:3])
+            for item in risks[:5]:
+                if isinstance(item, str):
+                    lines.append(f"- {self._compact(item, 420)} {risk_citations}".strip())
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                citations = " ".join(f"[{citation}]" for citation in item.get("citations") or [])
+                if not citations:
+                    citations = risk_citations
+                risk = item.get("risk") or "Risk"
+                detail = self._compact(item.get("why_it_matters") or "", 420)
+                lines.append(f"- {risk}: {detail} {citations}".strip())
+        excerpt_evidence = [item for item in evidence if item.get("kind") == "filing_excerpt"]
+        if excerpt_evidence:
+            lines.append("Evidence references:")
+            for item in excerpt_evidence[:12]:
+                citation = item.get("citation_id")
+                section = item.get("section")
+                note = self._compact(item.get("note") or "", 260)
+                excerpt = self._compact(item.get("excerpt") or "", 360)
+                lines.append(f"- [{citation}] {section}: {note}. Excerpt: {excerpt}")
+        return "\n".join(lines)
+
+    def _compact(self, value: Any, limit: int) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1].rstrip() + "…"
+
     def _set_status(self, task_id: str, status: str) -> None:
         with self._lock:
             record = self._tasks[task_id]
@@ -407,6 +551,14 @@ class TaskStore:
             record.events.append(event)
             record.updated_at = utc_now()
             self._persist_task(record)
+
+    def _append_stage(self, task_id: str, stage: str, label: str, detail: str) -> None:
+        self._append_event(
+            task_id,
+            "task_stage",
+            label,
+            {"stage": stage, "label": label, "detail": detail},
+        )
 
     def _event(self, event_type: str, message: str, payload: JsonDict) -> JsonDict:
         return {
@@ -423,6 +575,16 @@ class TaskStore:
             "metadata": metadata or {},
             "timestamp": utc_now(),
         }
+
+    def _failure_hint(self, error: str) -> str:
+        lowered = error.lower()
+        if "api" in lowered or "model" in lowered or "llm" in lowered:
+            return "Model configuration or model response failed. Check Model API settings and retry."
+        if "sec" in lowered or "edgar" in lowered or "download" in lowered:
+            return "SEC filing retrieval failed. Check network access and ticker or filing type."
+        if "ticker" in lowered:
+            return "Ticker is missing or invalid. Provide a valid public company ticker."
+        return error
 
     def _reply_for_policy(self, routed_intent: JsonDict, policy_decision: JsonDict) -> str:
         action = policy_decision.get("action")
